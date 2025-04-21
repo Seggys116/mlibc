@@ -7,21 +7,21 @@ sysdep_supported_options = {
 
 rtld_sources += files(
 	'generic/filesystem.cpp',
-	'generic/generic.cpp',
+	'generic/unified.cpp',
 )
 
 libc_sources += files(
 	'generic/entry.cpp',
 	'generic/filesystem.cpp',
-	'generic/generic.cpp',
-	'generic/thread.cpp',
+	'generic/unified.cpp',
+	'generic/pty.cpp',
 	'generic/signals.cpp',
 	'generic/sockets.cpp',
-	'generic/pty.cpp',
+	'generic/thread_entry.S',
+	'generic/thread.cpp'
 )
 
 if not no_headers
-	# Install abi-bits headers (using Linux ABI definitions)
 	install_headers(
 		'include/abi-bits/auxv.h',
 		'include/abi-bits/seek-whence.h',
@@ -79,11 +79,8 @@ if not no_headers
 		subdir: 'abi-bits',
 		follow_symlinks: true
 	)
-
-	# Install unified-specific headers
 	install_headers(
 		'include/unified/syscall.h',
-		'include/unified/ioctl.h',
 		subdir: 'unified'
 	)
 endif
@@ -111,3 +108,4 @@ if not headers_only
 		)
 	endforeach
 endif
+

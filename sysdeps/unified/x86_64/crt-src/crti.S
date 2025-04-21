@@ -1,11 +1,15 @@
-	.section .init,"ax",@progbits
-	.global _init
-_init:
-	push %rbp
-	mov %rsp, %rbp
+	.ident "x86_64-unified-mlibc crti"
 
-	.section .fini,"ax",@progbits
-	.global _fini
+	.section .init
+	.globl	_init
+	.type	_init,@function
+_init:
+	push %rax
+
+	.section .fini
+	.globl	_fini
+	.type	_fini,@function
 _fini:
-	push %rbp
-	mov %rsp, %rbp
+	push %rax
+
+.section .note.GNU-stack,"",%progbits

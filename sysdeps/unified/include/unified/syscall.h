@@ -107,7 +107,7 @@
 #define SYS_KILL 104
 #define SYS_SIGNAL_RETURN 105
 #define SYS_ALARM 106
-#define SYS_GET_RESOURCE_LIMIT 107
+#define SYS_GET_RESOURCE_LIMIT 107 
 #define SYS_EPOLL_CREATE 108
 #define SYS_EPOLL_CTL 109
 #define SYS_EPOLL_WAIT 110
@@ -153,6 +153,17 @@
 #define SYS_SIGNALFD            150
 #define SYS_RENAME_AT           151
 #define SYS_CLONE               152
+#define SYS_SCHED_SETAFFINITY   153
+#define SYS_SCHED_GETAFFINITY   154
+#define SYS_GETRESUID           155
+#define SYS_SETRESUID           156
+#define SYS_GETRESGID           157
+#define SYS_SETRESGID           158
+#define SYS_GETGROUPS           159
+#define SYS_SETGROUPS           160
+#define SYS_SETREUID            161
+#define SYS_SETREGID            162
+#define SYS_UMASK               163
 
 #ifdef __cplusplus
 extern "C"{
@@ -161,65 +172,67 @@ extern "C"{
 __attribute__((__always_inline__))
 static inline long syscalln0(uint64_t call) {
     volatile long ret;
-    asm volatile("int $0x69" : "=a"(ret) : "a"(call));
+    asm volatile("int $0x69" : "=a"(ret) : "a"(call)); 
     return ret;
 }
 
 __attribute__((__always_inline__))
 static long syscalln1(uint64_t call, uint64_t arg0) {
     volatile long ret;
-    asm volatile("int $0x69" : "=a"(ret) : "a"(call), "D"(arg0) : "memory");
+    asm volatile("int $0x69" : "=a"(ret) : "a"(call), "D"(arg0) : "memory"); 
     return ret;
 }
 
 __attribute__((__always_inline__))
 static long syscalln2(uint64_t call, uint64_t arg0, uint64_t arg1) {
     volatile long ret;
-    asm volatile("int $0x69" : "=a"(ret) : "a"(call), "D"(arg0), "S"(arg1) : "memory");
+    asm volatile("int $0x69" : "=a"(ret) : "a"(call), "D"(arg0), "S"(arg1) : "memory"); 
     return ret;
 }
 
 __attribute__((__always_inline__))
 static long syscalln3(uint64_t call, uint64_t arg0, uint64_t arg1, uint64_t arg2) {
     volatile long ret;
-    asm volatile("int $0x69" : "=a"(ret) : "a"(call), "D"(arg0), "S"(arg1), "d"(arg2) : "memory");
+    asm volatile("int $0x69" : "=a"(ret) : "a"(call), "D"(arg0), "S"(arg1), "d"(arg2) : "memory"); 
     return ret;
 }
 
 __attribute__((__always_inline__))
 static long syscalln4(uint64_t call, uint64_t arg0, uint64_t arg1, uint64_t arg2, uint64_t arg3) {
     volatile long ret;
-	register uint64_t arg3r asm("r10") = arg3;
-    asm volatile("int $0x69" : "=a"(ret) : "a"(call), "D"(arg0), "S"(arg1), "d"(arg2), "r"(arg3r) : "memory");
+	register uint64_t arg3r asm("r10") = arg3; /* put arg3 in r10 */
+    asm volatile("int $0x69" : "=a"(ret) : "a"(call), "D"(arg0), "S"(arg1), "d"(arg2), "r"(arg3r) : "memory"); 
     return ret;
 }
 
 __attribute__((__always_inline__))
 static long syscalln5(uint64_t call, uint64_t arg0, uint64_t arg1, uint64_t arg2, uint64_t arg3, uint64_t arg4) {
     volatile long ret;
-	register uint64_t arg3r asm("r10") = arg3;
-	register uint64_t arg4r asm("r9") = arg4;
-    asm volatile("int $0x69" : "=a"(ret) : "a"(call), "D"(arg0), "S"(arg1), "d"(arg2), "r"(arg3r), "r"(arg4r) : "memory");
+	register uint64_t arg3r asm("r10") = arg3; /* put arg3 in r10 */
+	register uint64_t arg4r asm("r9") = arg4; /* put arg4 in r9 */
+    asm volatile("int $0x69" : "=a"(ret) : "a"(call), "D"(arg0), "S"(arg1), "d"(arg2), "r"(arg3r), "r"(arg4r) : "memory"); 
     return ret;
 }
 
 __attribute__((__always_inline__))
 static long syscalln6(uint64_t call, uint64_t arg0, uint64_t arg1, uint64_t arg2, uint64_t arg3, uint64_t arg4, uint64_t arg5) {
     volatile long ret;
-	register uint64_t arg3r asm("r10") = arg3;
-	register uint64_t arg4r asm("r9") = arg4;
-	register uint64_t arg5r asm("r8") = arg5;
+	register uint64_t arg3r asm("r10") = arg3; /* put arg3 in r10 */
+	register uint64_t arg4r asm("r9") = arg4; /* put arg4 in r9 */
+	register uint64_t arg5r asm("r8") = arg5; /* put arg5 in r8 */
     asm volatile("int $0x69" : "=a"(ret) : "a"(call), "D"(arg0), "S"(arg1), "d"(arg2), "r"(arg3r), "r"(arg4r), "r"(arg5r) : "memory");
     return ret;
 }
 
+// For syscalls with 7 arguments (like mmap with fd and offset), we pack fd and offset into a single struct
+// fd (32-bit) in low bits, offset (64-bit) passed separately via r12
 __attribute__((__always_inline__))
 static long syscalln7(uint64_t call, uint64_t arg0, uint64_t arg1, uint64_t arg2, uint64_t arg3, uint64_t arg4, uint64_t arg5, uint64_t arg6) {
     volatile long ret;
-	register uint64_t arg3r asm("r10") = arg3;
-	register uint64_t arg4r asm("r9") = arg4;
-	register uint64_t arg5r asm("r8") = arg5;
-	register uint64_t arg6r asm("r12") = arg6;
+	register uint64_t arg3r asm("r10") = arg3; /* put arg3 in r10 */
+	register uint64_t arg4r asm("r9") = arg4; /* put arg4 in r9 */
+	register uint64_t arg5r asm("r8") = arg5; /* put arg5 in r8 */
+	register uint64_t arg6r asm("r12") = arg6; /* put arg6 in r12 */
     asm volatile("int $0x69" : "=a"(ret) : "a"(call), "D"(arg0), "S"(arg1), "d"(arg2), "r"(arg3r), "r"(arg4r), "r"(arg5r), "r"(arg6r) : "memory");
     return ret;
 }

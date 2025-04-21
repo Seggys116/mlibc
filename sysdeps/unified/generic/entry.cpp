@@ -1,15 +1,21 @@
-#include <stdint.h>
+#include <pthread.h>
 #include <stdlib.h>
 #include <sys/auxv.h>
 
+#include <frg/eternal.hpp>
+
 #include <bits/ensure.h>
+#include <mlibc/all-sysdeps.hpp>
+#include <mlibc/allocator.hpp>
+#include <mlibc/debug.hpp>
 #include <mlibc/elf/startup.h>
 
+extern "C" uintptr_t *__dlapi_entrystack();
 extern "C" void __dlapi_enter(uintptr_t *);
-
 extern char **environ;
 
-extern "C" void __mlibc_entry(uintptr_t *entry_stack, int (*main_fn)(int argc, char *argv[], char *env[])) {
+extern "C" void
+__mlibc_entry(uintptr_t *entry_stack, int (*main_fn)(int argc, char *argv[], char *env[])) {
 	__dlapi_enter(entry_stack);
 	auto result = main_fn(mlibc::entry_stack.argc, mlibc::entry_stack.argv, environ);
 	exit(result);

@@ -1,7 +1,11 @@
-	.section .init,"ax",@progbits
-	pop %rbp
+.ident "x86_64-unified-mlibc crtn"
+
+.section .init
+	pop %rax
 	ret
 
-	.section .fini,"ax",@progbits
-	pop %rbp
+.section .fini
+	pop %rax
 	ret
+
+.section .note.GNU-stack,"",%progbits

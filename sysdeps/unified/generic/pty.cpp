@@ -1,5 +1,4 @@
 #include <unified/ioctl.h>
-#include <sys/ioctl.h>
 
 #include <errno.h>
 
@@ -78,10 +77,4 @@ int sys_unlockpt(int fd) {
 
 	return 0;
 }
-
-int sys_setsid(pid_t *sid) {
-    mlibc::infoLogger() << "mlibc: sys_setsid is a stub" << frg::endlog;
-    return 0;
-}
-
 }

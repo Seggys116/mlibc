@@ -1,19 +1,8 @@
-	.text
-	.globl	_start
+.section .text
+.global _start
 _start:
-	/* Set up stack frame */
-	mov	%rsp, %rbp
-	push	%rbx
-	push	%r12
-	push	%r13
-	push	%r14
-	push	%r15
+	mov %rsp, %rdi
+	lea main(%rip), %rsi
+	call __mlibc_entry
+.section .note.GNU-stack,"",%progbits
 
-	/* Align stack to 16 bytes */
-	and	$-16, %rsp
-
-	/* Call _start to set up libucrt stuff */
-	call	__cstart
-
-	/* Should never reach here */
-	hlt

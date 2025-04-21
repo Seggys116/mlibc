@@ -46,100 +46,21 @@
 extern "C" {
 #endif
 
-#if defined(__x86_64__)
-
 struct stat {
 	dev_t st_dev;
 	ino_t st_ino;
-	nlink_t st_nlink;
 	mode_t st_mode;
+	nlink_t st_nlink;
 	uid_t st_uid;
 	gid_t st_gid;
-	unsigned int __pad0;
 	dev_t st_rdev;
 	off_t st_size;
-	blksize_t st_blksize;
-	blkcnt_t st_blocks;
 	struct timespec st_atim;
 	struct timespec st_mtim;
 	struct timespec st_ctim;
-	long __unused[3];
-};
-
-#elif (defined(__riscv) && __riscv_xlen == 64) || defined (__aarch64__) || defined(__loongarch64)
-
-struct stat {
-	dev_t st_dev;
-	ino_t st_ino;
-	mode_t st_mode;
-	nlink_t st_nlink;
-	uid_t st_uid;
-	gid_t st_gid;
-	dev_t st_rdev;
-	dev_t __pad1;
-	off_t st_size;
-	blksize_t st_blksize;
-	int __pad2;
-	blkcnt_t st_blocks;
-	struct timespec st_atim;
-	struct timespec st_mtim;
-	struct timespec st_ctim;
-	int __pad3[2];
-};
-
-#elif defined(__i386__)
-
-struct stat {
-	dev_t st_dev;
-	int __st_dev_padding;
-	long __st_ino_truncated;
-	mode_t st_mode;
-	nlink_t st_nlink;
-	uid_t st_uid;
-	gid_t st_gid;
-	dev_t st_rdev;
-	int __st_rdev_padding;
-	off_t st_size;
 	blksize_t st_blksize;
 	blkcnt_t st_blocks;
-	struct {
-		long tv_sec;
-		long tv_nsec;
-	} __st_atim32, __st_mtim32, __st_ctim32;
-	ino_t st_ino;
-
-	/* These fields are not in the ABI. Their values are */
-	/* copied from __st_atim32, __st_mtim32, __st_ctim32 */
-	/* accordingly. */
-
-	struct timespec st_atim;
-	struct timespec st_mtim;
-	struct timespec st_ctim;
 };
-#elif defined (__m68k__)
-
-struct stat {
-	dev_t st_dev;
-	unsigned char __st_dev_padding[2];
-	unsigned long __st_ino;
-	mode_t st_mode;
-	nlink_t st_nlink;
-	uid_t st_uid;
-	gid_t st_gid;
-	dev_t st_rdev;
-	unsigned char __st_rdev_padding;
-	long long st_size; /* TODO: off64_t? */
-	blksize_t st_blksize;
-	blkcnt_t st_blocks;
-	struct timespec st_atim;
-	struct timespec st_mtim;
-	struct timespec st_ctim;
-	ino_t st_ino;
-};
-
-#endif
-
-#define stat64 stat
 
 #ifdef __cplusplus
 }

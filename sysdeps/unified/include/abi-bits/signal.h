@@ -1,7 +1,7 @@
 #ifndef _ABIBITS_SIGNAL_H
 #define _ABIBITS_SIGNAL_H
 
-#include <stdint.h>
+// #include <stdint.h>
 #include <time.h>
 #include <abi-bits/sigevent.h>
 #include <abi-bits/pid_t.h>
@@ -93,11 +93,6 @@ typedef struct {
 #define SA_RESETHAND 0x80000000
 #define SA_RESTORER 0x04000000
 
-/* SA_NOMASK is an alias for SA_NODEFER */
-/* SA_ONESHOT is an alias for SA_RESETHAND */
-#define SA_NOMASK SA_NODEFER
-#define SA_ONESHOT SA_RESETHAND
-
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -121,9 +116,7 @@ typedef void (*__sighandler) (int);
 #define SIGRTMIN 35
 #define SIGRTMAX 64
 
-typedef struct {
-	unsigned long sig[1024 / (8 * sizeof(long))];
-} sigset_t;
+typedef unsigned long sigset_t;
 
 /* constants for sigprocmask() */
 #define SIG_BLOCK 0
@@ -156,7 +149,6 @@ typedef struct {
 #define SIGSYS    31
 #define SIGUNUSED SIGSYS
 #define SIGCANCEL 32
-#define SIGTIMER  33
 
 #define MINSIGSTKSZ 2048
 #define SIGSTKSZ 8192
@@ -285,43 +277,43 @@ struct _fpxreg {
 };
 
 struct _xmmreg {
-	uint32_t element[4];
+	unsigned int element[4];
 };
 
 struct _fpstate {
 #if defined(__x86_64__)
-	uint16_t cwd;
-	uint16_t swd;
-	uint16_t ftw;
-	uint16_t fop;
-	uint64_t rip;
-	uint64_t rdp;
-	uint32_t mxcsr;
-	uint32_t mxcr_mask;
+	unsigned short cwd;
+	unsigned short swd;
+	unsigned short ftw;
+	unsigned short fop;
+	unsigned long rip;
+	unsigned long rdp;
+	unsigned int mxcsr;
+	unsigned int mxcr_mask;
 	struct _fpxreg _st[8];
 	struct _xmmreg _xmm[16];
-	uint32_t padding[24];
+	unsigned int padding[24];
 #elif defined(__i386__)
-	uint32_t cw;
-	uint32_t sw;
-	uint32_t tag;
-	uint32_t ipoff;
-	uint32_t cssel;
-	uint32_t dataoff;
-	uint32_t datasel;
+	unsigned int cw;
+	unsigned int sw;
+	unsigned int tag;
+	unsigned int ipoff;
+	unsigned int cssel;
+	unsigned int dataoff;
+	unsigned int datasel;
 	struct _fpreg _st[8];
-	uint16_t status;
-	uint16_t magic;
+	unsigned short status;
+	unsigned short magic;
 
 	/* FXSR FPU */
 
-	uint32_t _fxsr_env[6];
-	uint32_t mxscr;
-	uint32_t reserved;
+	unsigned int _fxsr_env[6];
+	unsigned int mxscr;
+	unsigned int reserved;
 	struct _fpxreg _fxsr_st[8];
 	struct _xmmreg _xmm[8];
 
-	uint32_t padding2[56];
+	unsigned int padding2[56];
 #endif
 };
 
@@ -380,19 +372,19 @@ enum {
 };
 
 struct __riscv_f_ext_state {
-	uint32_t f[32];
-	uint32_t fcsr;
+	unsigned int f[32];
+	unsigned int fcsr;
 };
 
 struct __riscv_d_ext_state {
-	uint64_t f[32];
-	uint32_t fcsr;
+	unsigned long f[32];
+	unsigned int fcsr;
 };
 
 struct __riscv_q_ext_state {
-	uint64_t f[64] __attribute__((__aligned__(16)));
-	uint32_t fcsr;
-	uint32_t reserved[3];
+	unsigned long f[64] __attribute__((__aligned__(16)));
+	unsigned int fcsr;
+	unsigned int reserved[3];
 };
 
 union __riscv_fp_state {
@@ -415,7 +407,7 @@ typedef struct __ucontext {
 	sigset_t uc_sigmask;
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wpedantic"
-	uint8_t __unused[1024 / 8 - sizeof(sigset_t)];
+	unsigned char __unused[1024 / 8 - sizeof(sigset_t)];
 #pragma GCC diagnostic pop
 	mcontext_t uc_mcontext;
 } ucontext_t;
@@ -425,12 +417,12 @@ typedef struct __ucontext {
 #define NGREG 34
 
 typedef struct sigcontext {
-	uint64_t fault_address;
-	uint64_t regs[31];
-	uint64_t sp;
-	uint64_t pc;
-	uint64_t pstate;
-	uint8_t __reserved[4096];
+	unsigned long fault_address;
+	unsigned long regs[31];
+	unsigned long sp;
+	unsigned long pc;
+	unsigned long pstate;
+	unsigned char __reserved[4096];
 } mcontext_t;
 
 #define FPSIMD_MAGIC 0x46508001
@@ -438,29 +430,29 @@ typedef struct sigcontext {
 #define EXTRA_MAGIC 0x45585401
 #define SVE_MAGIC 0x53564501
 struct _aarch64_ctx {
-	uint32_t magic;
-	uint32_t size;
+	unsigned int magic;
+	unsigned int size;
 };
 struct fpsimd_context {
 	struct _aarch64_ctx head;
-	uint32_t fpsr;
-	uint32_t fpcr;
+	unsigned int fpsr;
+	unsigned int fpcr;
 	__uint128_t vregs[32];
 };
 struct esr_context {
 	struct _aarch64_ctx head;
-	uint64_t esr;
+	unsigned long esr;
 };
 struct extra_context {
 	struct _aarch64_ctx head;
-	uint64_t datap;
-	uint32_t size;
-	uint32_t __reserved[3];
+	unsigned long datap;
+	unsigned int size;
+	unsigned int __reserved[3];
 };
 struct sve_context {
 	struct _aarch64_ctx head;
-	uint16_t vl;
-	uint16_t __reserved[3];
+	unsigned short vl;
+	unsigned short __reserved[3];
 };
 #define SVE_VQ_BYTES		16
 #define SVE_VQ_MIN		1

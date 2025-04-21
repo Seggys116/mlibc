@@ -37,8 +37,9 @@ struct ipc64_perm {
 	uid_t cuid;
 	gid_t cgid;
 	mode_t mode;
-	int __ipc_perm_seq;
-	long __unused[2];
+	short __ipc_perm_seq;
+	short __pad;
+	unsigned long __unused[2];
 };
 
 #define ipc_perm ipc64_perm
