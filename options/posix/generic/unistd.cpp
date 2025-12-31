@@ -1,25 +1,30 @@
-#include <stdio.h>
+#include <dirent.h>
 #include <errno.h>
+#include <limits.h>
+#include <pwd.h>
 #include <stdarg.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/resource.h>
-#include <unistd.h>
-#include <dirent.h>
-#include <limits.h>
-#include <termios.h>
-#include <pwd.h>
-#include <sys/ioctl.h>
 #include <sys/stat.h>
+#include <termios.h>
+#include <unistd.h>
+#include <utmpx.h>
 
 #include <bits/ensure.h>
+#include <mlibc-config.h>
 #include <mlibc/allocator.hpp>
 #include <mlibc/arch-defs.hpp>
 #include <mlibc/debug.hpp>
 #include <mlibc/getopt.hpp>
 #include <mlibc/posix-sysdeps.hpp>
-#include <mlibc/bsd-sysdeps.hpp>
 #include <mlibc/thread.hpp>
+#include <mlibc/utmp.hpp>
+
+#if __MLIBC_BSD_OPTION
+#include <mlibc/bsd-sysdeps.hpp>
+#endif
 
 #if __MLIBC_LINUX_OPTION
 #include <mlibc/linux-sysdeps.hpp>
@@ -65,7 +70,7 @@ int chown(const char *path, uid_t uid, gid_t gid) {
 	return 0;
 }
 
-ssize_t confstr(int name, char *buf, size_t len) {
+size_t confstr(int name, char *buf, size_t len) {
 	const char *str = "";
 	if (name == _CS_PATH) {
 		str = "/bin:/usr/bin";
@@ -259,13 +264,21 @@ int fdatasync(int fd) {
 }
 
 int fexecve(int, char *const [], char *const []) {
-	__ensure(!"Not implemented");
-	__builtin_unreachable();
+	mlibc::infoLogger() << "mlibc: " << __FUNCTION__ << " not implemented!" << frg::endlog;
+	return errno = ENOSYS, -1;
 }
 
-long fpathconf(int, int) {
-	__ensure(!"Not implemented");
-	__builtin_unreachable();
+long fpathconf(int, int name) {
+	switch (name) {
+	case _PC_NAME_MAX:
+		return NAME_MAX;
+	case _PC_FILESIZEBITS:
+		return FILESIZEBITS;
+	default:
+		mlibc::infoLogger() << "missing fpathconf() entry " << name << frg::endlog;
+		errno = EINVAL;
+		return -1;
+	}
 }
 
 int fsync(int fd) {
@@ -286,7 +299,9 @@ int ftruncate(int fd, off_t size) {
 	return 0;
 }
 
+#if __MLIBC_LINUX_OPTION
 [[gnu::alias("ftruncate")]] int ftruncate64(int fd, off64_t size);
+#endif /* !__MLIBC_LINUX_OPTION */
 
 char *getcwd(char *buffer, size_t size) {
 	if (buffer) {
@@ -448,8 +463,8 @@ int getgroups(int size, gid_t list[]) {
 }
 
 long gethostid(void) {
-	__ensure(!"Not implemented");
-	__builtin_unreachable();
+	mlibc::infoLogger() << "mlibc: " << __FUNCTION__ << " not implemented!" << frg::endlog;
+	return errno = ENOSYS, -1;
 }
 
 int gethostname(char *buffer, size_t bufsize) {
@@ -470,14 +485,50 @@ int sethostname(const char *buffer, size_t bufsize) {
 	return 0;
 }
 
-// Code taken from musl
+namespace {
+
+char getloginBuf[LOGIN_NAME_MAX];
+
+} // namespace
+
 char *getlogin(void) {
-	return getenv("LOGNAME");
+	if (int e = getlogin_r(getloginBuf, sizeof(getloginBuf)); e) {
+		errno = e;
+		return nullptr;
+	}
+	return getloginBuf;
 }
 
-int getlogin_r(char *, size_t) {
-	__ensure(!"Not implemented");
-	__builtin_unreachable();
+int getlogin_r(char *name, size_t name_len) {
+	if(mlibc::sys_getlogin_r) {
+		int e = mlibc::sys_getlogin_r(name, name_len);
+		if (e == 0) {
+			return 0;
+		} else if (e && e != EINVAL) {
+			return e;
+		}
+	}
+
+	char ttypath[2 * NAME_MAX + 3];
+	if (int e = ttyname_r(0, ttypath, sizeof(ttypath)); e)
+		return e;
+
+	struct utmpx line;
+	strlcpy(line.ut_line, ttypath + 5, sizeof(line.ut_line));
+
+	struct utmpx utx;
+	if (!mlibc::getutxline_r(&line, &utx)) {
+		if (errno == ESRCH)
+			return ENOENT;
+		return errno;
+	}
+
+	size_t needed = strnlen(utx.ut_user, __UT_NAMESIZE) + 1;
+	if (needed > name_len)
+		return ERANGE;
+
+	strlcpy(name, utx.ut_user, needed);
+	return 0;
 }
 
 int getopt(int argc, char *const argv[], const char *optstring) {
@@ -587,6 +638,8 @@ long pathconf(const char *, int name) {
 	switch (name) {
 	case _PC_NAME_MAX:
 		return NAME_MAX;
+	case _PC_FILESIZEBITS:
+		return FILESIZEBITS;
 	default:
 		mlibc::infoLogger() << "missing pathconf() entry " << name << frg::endlog;
 		errno = EINVAL;
@@ -633,7 +686,9 @@ ssize_t pread(int fd, void *buf, size_t n, off_t off) {
 	return num_read;
 }
 
+#if __MLIBC_LINUX_OPTION
 [[gnu::alias("pread")]] ssize_t pread64(int fd, void *buf, size_t n, off_t off);
+#endif /* !__MLIBC_LINUX_OPTION */
 
 ssize_t pwrite(int fd, const void *buf, size_t n, off_t off) {
 	ssize_t num_written;
@@ -646,7 +701,9 @@ ssize_t pwrite(int fd, const void *buf, size_t n, off_t off) {
 	return num_written;
 }
 
+#if __MLIBC_LINUX_OPTION
 [[gnu::alias("pwrite")]] ssize_t pwrite64(int fd, const void *buf, size_t n, off_t off);
+#endif /* !__MLIBC_LINUX_OPTION */
 
 ssize_t readlink(const char *__restrict path, char *__restrict buffer, size_t max_size) {
 	ssize_t length;
@@ -822,6 +879,8 @@ long sysconf(int number) {
 		case _SC_OPEN_MAX:
 			mlibc::infoLogger() << "\e[31mmlibc: sysconf(_SC_OPEN_MAX) returns fallback value 256\e[39m" << frg::endlog;
 			return 256;
+		case _SC_COLL_WEIGHTS_MAX:
+			return COLL_WEIGHTS_MAX;
 		case _SC_TZNAME_MAX:
 			return -1;
 		case _SC_PHYS_PAGES:
@@ -882,11 +941,9 @@ long sysconf(int number) {
 			mlibc::infoLogger() << "\e[31mmlibc: sysconf(_SC_NPROCESSORS_CONF) unconditionally returns fallback value 1\e[39m" << frg::endlog;
 			return 1;
 		case _SC_HOST_NAME_MAX:
-			mlibc::infoLogger() << "\e[31mmlibc: sysconf(_SC_HOST_NAME_MAX) unconditionally returns fallback value 256\e[39m" << frg::endlog;
-			return 256;
+			return HOST_NAME_MAX;
 		case _SC_LOGIN_NAME_MAX:
-			mlibc::infoLogger() << "\e[31mmlibc: sysconf(_SC_LOGIN_NAME_MAX) unconditionally returns fallback value 256\e[39m" << frg::endlog;
-			return 256;
+			return LOGIN_NAME_MAX;
 		case _SC_FSYNC:
 			return _POSIX_FSYNC;
 		case _SC_SAVED_IDS:
@@ -894,6 +951,20 @@ long sysconf(int number) {
 		case _SC_SYMLOOP_MAX:
 			mlibc::infoLogger() << "\e[31mmlibc: sysconf(_SC_SYMLOOP_MAX) unconditionally returns fallback value 8\e[39m" << frg::endlog;
 			return 8;
+		case _SC_VERSION:
+			return _POSIX_VERSION;
+		case _SC_2_VERSION:
+			return _POSIX2_VERSION;
+		case _SC_XOPEN_VERSION:
+			return _XOPEN_VERSION;
+		case _SC_MEMLOCK:
+			return _POSIX_MEMLOCK;
+		case _SC_MEMLOCK_RANGE:
+			return _POSIX_MEMLOCK_RANGE;
+		case _SC_MAPPED_FILES:
+			return _POSIX_MAPPED_FILES;
+		case _SC_SHARED_MEMORY_OBJECTS:
+			return _POSIX_SHARED_MEMORY_OBJECTS;
 		default:
 			mlibc::infoLogger() << "\e[31mmlibc: sysconf() call is not implemented, number: " << number << "\e[39m" << frg::endlog;
 			errno = EINVAL;
@@ -902,23 +973,35 @@ long sysconf(int number) {
 }
 
 pid_t tcgetpgrp(int fd) {
-	int pgrp;
-	if(ioctl(fd, TIOCGPGRP, &pgrp) < 0) {
+	int pgrp, scratch;
+	MLIBC_CHECK_OR_ENOSYS(mlibc::sys_ioctl, -1);
+	if(int e = mlibc::sys_ioctl(fd, TIOCGPGRP, &pgrp, &scratch); e) {
+		errno = e;
 		return -1;
 	}
+
 	return pgrp;
 }
 
 int tcsetpgrp(int fd, pid_t pgrp) {
-	return ioctl(fd, TIOCSPGRP, &pgrp);
+	int scratch;
+	MLIBC_CHECK_OR_ENOSYS(mlibc::sys_ioctl, -1);
+	if(int e = mlibc::sys_ioctl(fd, TIOCSPGRP, &pgrp, &scratch); e) {
+		errno = e;
+		return -1;
+	}
+
+	return 0;
 }
 
 int truncate(const char *, off_t) {
-	__ensure(!"Not implemented");
-	__builtin_unreachable();
+	mlibc::infoLogger() << "mlibc: " << __FUNCTION__ << " not implemented!" << frg::endlog;
+	return errno = ENOSYS, -1;
 }
 
+#if __MLIBC_LINUX_OPTION
 [[gnu::alias("truncate")]] int truncate64(const char *, off64_t);
+#endif /* !__MLIBC_LINUX_OPTION */
 
 char *ttyname(int fd) {
 	const size_t size = 128;
@@ -959,6 +1042,10 @@ int unlinkat(int fd, const char *path, int flags) {
 
 int getpagesize() {
 	return mlibc::page_size;
+}
+
+int getdtablesize(void){
+	return sysconf(_SC_OPEN_MAX);
 }
 
 // Code taken from musl
@@ -1029,8 +1116,8 @@ pid_t gettid(void) {
 
 int getentropy(void *buffer, size_t length) {
 	MLIBC_CHECK_OR_ENOSYS(mlibc::sys_getentropy, -1);
-	if(length > 256) {
-		errno = EIO;
+	if(length > GETENTROPY_MAX) {
+		errno = EINVAL;
 		return -1;
 	}
 	if(int e = mlibc::sys_getentropy(buffer, length); e) {
@@ -1097,13 +1184,19 @@ unsigned int sleep(unsigned int secs) {
 
 // In contrast to sleep() this functions returns 0/-1 on success/failure.
 int usleep(useconds_t usecs) {
-	time_t seconds = 0;
-	long nanos = usecs * 1000;
+	constexpr long usec_per_sec = 1'000'000;
+
+	time_t seconds = usecs / usec_per_sec;
+	long nanos = (usecs % usec_per_sec) * 1000;
 	if(!mlibc::sys_sleep) {
 		MLIBC_MISSING_SYSDEP();
 		__ensure(!"Cannot continue without sys_sleep()");
 	}
-	return mlibc::sys_sleep(&seconds, &nanos);
+	if (int e = mlibc::sys_sleep(&seconds, &nanos); e) {
+		errno = e;
+		return -1;
+	}
+	return 0;
 }
 
 int dup(int fd) {
@@ -1119,6 +1212,19 @@ int dup(int fd) {
 int dup2(int fd, int newfd) {
 	MLIBC_CHECK_OR_ENOSYS(mlibc::sys_dup2, -1);
 	if(int e = mlibc::sys_dup2(fd, 0, newfd); e) {
+		errno = e;
+		return -1;
+	}
+	return newfd;
+}
+
+int dup3(int oldfd, int newfd, int flags) {
+	if(oldfd == newfd) {
+		errno = EINVAL;
+		return -1;
+	}
+	MLIBC_CHECK_OR_ENOSYS(mlibc::sys_dup2, -1);
+	if(int e = mlibc::sys_dup2(oldfd, flags, newfd); e) {
 		errno = e;
 		return -1;
 	}

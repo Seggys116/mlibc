@@ -317,15 +317,6 @@ int sys_stat(fsfd_target fsfdt, int fd, const char *path, int flags, struct stat
 		return e;
 	}
 
-#if defined(__i386__)
-	statbuf->st_atim.tv_sec = statbuf->__st_atim32.tv_sec;
-	statbuf->st_atim.tv_nsec = statbuf->__st_atim32.tv_nsec;
-	statbuf->st_mtim.tv_sec = statbuf->__st_mtim32.tv_sec;
-	statbuf->st_mtim.tv_nsec = statbuf->__st_mtim32.tv_nsec;
-	statbuf->st_ctim.tv_sec = statbuf->__st_ctim32.tv_sec;
-	statbuf->st_ctim.tv_nsec = statbuf->__st_ctim32.tv_nsec;
-#endif
-
 	return 0;
 }
 
@@ -399,14 +390,6 @@ int sys_socket(int domain, int type, int protocol, int *fd) {
         return 0;
 }
 
-int sys_msg_send(int sockfd, const struct msghdr *msg, int flags, ssize_t *length) {
-        auto ret = do_cp_syscall(SYS_sendmsg, sockfd, msg, flags);
-        if (int e = sc_error(ret); e)
-                return e;
-        *length = sc_int_result<ssize_t>(ret);
-        return 0;
-}
-
 ssize_t sys_sendto(int fd, const void *buffer, size_t size, int flags, const struct sockaddr *sock_addr, socklen_t addr_length, ssize_t *length) {
 	auto ret = do_cp_syscall(SYS_sendto, fd, buffer, size, flags, sock_addr, addr_length);
 	if(int e = sc_error(ret); e) {
@@ -423,14 +406,6 @@ ssize_t sys_recvfrom(int fd, void *buffer, size_t size, int flags, struct sockad
 	}
 	*length = sc_int_result<ssize_t>(ret);
 	return 0;
-}
-
-int sys_msg_recv(int sockfd, struct msghdr *msg, int flags, ssize_t *length) {
-        auto ret = do_cp_syscall(SYS_recvmsg, sockfd, msg, flags);
-        if (int e = sc_error(ret); e)
-                return e;
-        *length = sc_int_result<ssize_t>(ret);
-        return 0;
 }
 
 int sys_fcntl(int fd, int cmd, va_list args, int *result) {
@@ -462,6 +437,8 @@ int sys_unlinkat(int dfd, const char *path, int flags) {
 }
 
 int sys_sleep(time_t *secs, long *nanos) {
+	__ensure(*nanos < 1'000'000'000);
+
 	struct timespec req = {
 		.tv_sec = *secs,
 		.tv_nsec = *nanos
@@ -494,6 +471,7 @@ int sys_isatty(int fd) {
 #include <sys/ipc.h>
 #include <sys/user.h>
 #include <sys/utsname.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/sysinfo.h>
 #include <unistd.h>
@@ -502,6 +480,44 @@ int sys_isatty(int fd) {
 #include <sched.h>
 #include <fcntl.h>
 #include <pthread.h>
+#include <pwd.h>
+
+#include <mlibc/utmp.hpp>
+
+int sys_msg_send(int sockfd, const struct msghdr *msg, int flags, ssize_t *length) {
+	// Work around ABI mismatches: POSIX requires us to expose some members of a particular type,
+	// and Linux kernel ABI is using larger types. Our fix is to add padding members to preserve
+	// struct layout and zero them out here.
+#if __INTPTR_WIDTH__ == 64
+	const_cast<msghdr *>(msg)->__pad0 = 0;
+	const_cast<msghdr *>(msg)->__pad1 = 0;
+
+	for (auto cmsg = CMSG_FIRSTHDR(msg); cmsg; cmsg = CMSG_NXTHDR(msg, cmsg))
+		cmsg->__pad = 0;
+#endif /* __INTPTR_WIDTH__ == 64 */
+
+	auto ret = do_cp_syscall(SYS_sendmsg, sockfd, msg, flags);
+	if (int e = sc_error(ret); e)
+		return e;
+	*length = sc_int_result<ssize_t>(ret);
+	return 0;
+}
+
+int sys_msg_recv(int sockfd, struct msghdr *msg, int flags, ssize_t *length) {
+	// Work around ABI mismatches: POSIX requires us to expose some members of a particular type,
+	// and Linux kernel ABI is using larger types. Our fix is to add padding members to preserve
+	// struct layout and zero them out here.
+#if __INTPTR_WIDTH__ == 64
+	const_cast<msghdr *>(msg)->__pad0 = 0;
+	const_cast<msghdr *>(msg)->__pad1 = 0;
+#endif /* __INTPTR_WIDTH__ == 64 */
+
+	auto ret = do_cp_syscall(SYS_recvmsg, sockfd, msg, flags);
+	if (int e = sc_error(ret); e)
+			return e;
+	*length = sc_int_result<ssize_t>(ret);
+	return 0;
+}
 
 int sys_ioctl(int fd, unsigned long request, void *arg, int *result) {
 	auto ret = do_syscall(SYS_ioctl, fd, request, arg);
@@ -742,6 +758,13 @@ int sys_tcsetattr(int fd, int optional_action, const struct termios *attr) {
 	return 0;
 }
 
+int sys_tcsendbreak(int fd, int) {
+	auto ret = do_syscall(SYS_ioctl, fd, TCSBRK, 0);
+	if (int e = sc_error(ret); e)
+		return e;
+	return 0;
+}
+
 int sys_tcflush(int fd, int queue) {
 	auto ret = do_syscall(SYS_ioctl, fd, TCFLSH, queue);
 	if (int e = sc_error(ret); e)
@@ -758,6 +781,20 @@ int sys_tcdrain(int fd) {
 
 int sys_tcflow(int fd, int action) {
 	auto ret = do_syscall(SYS_ioctl, fd, TCXONC, action);
+	if (int e = sc_error(ret); e)
+		return e;
+	return 0;
+}
+
+int sys_tcgetwinsize(int fd, struct winsize *winsz) {
+	auto ret = do_syscall(SYS_ioctl, fd, TIOCGWINSZ, winsz);
+	if (int e = sc_error(ret); e)
+		return e;
+	return 0;
+}
+
+int sys_tcsetwinsize(int fd, const struct winsize *winsz) {
+	auto ret = do_syscall(SYS_ioctl, fd, TIOCSWINSZ, winsz);
 	if (int e = sc_error(ret); e)
 		return e;
 	return 0;
@@ -829,6 +866,13 @@ int sys_shutdown(int sockfd, int how) {
 	if (int e = sc_error(ret); e) {
 		return e;
 	}
+	return 0;
+}
+
+int sys_sockatmark(int sockfd, int *out) {
+	auto ret = do_syscall(SYS_ioctl, sockfd, SIOCATMARK, out);
+	if (int e = sc_error(ret); e)
+		return e;
 	return 0;
 }
 
@@ -905,7 +949,7 @@ void timer_handle(int, siginfo_t *, void *) {
 void *timer_setup(void *arg) {
 	auto ctx = reinterpret_cast<PosixTimerContext *>(arg);
 
-	sigset_t set;
+	sigset_t set{};
 	sigaddset(&set, SIGTIMER);
 
 	// wait for parent setup to be complete
@@ -920,7 +964,7 @@ void *timer_setup(void *arg) {
 	// notify the parent that the context can be dropped
 	__atomic_store_n(&ctx->workerSem, 1, __ATOMIC_RELEASE);
 
-	siginfo_t si;
+	siginfo_t si{};
 	int signo;
 
 	while(true) {
@@ -1060,6 +1104,15 @@ int sys_timer_delete(timer_t t) {
 	return 0;
 }
 
+int sys_timer_getoverrun(timer_t t, int *out) {
+	auto ret = do_syscall(SYS_timer_getoverrun, t);
+	if (int e = sc_error(ret); e)
+		return e;
+
+	*out = sc_int_result<int>(ret);
+	return 0;
+}
+
 int sys_ptrace(long req, pid_t pid, void *addr, void *data, long *out) {
 	auto ret = do_syscall(SYS_ptrace, req, pid, addr, data);
 	if (int e = sc_error(ret); e)
@@ -1077,6 +1130,20 @@ int sys_read_entries(int handle, void *buffer, size_t max_size, size_t *bytes_re
 	if(int e = sc_error(ret); e)
 		return e;
 	*bytes_read = sc_int_result<int>(ret);
+	return 0;
+}
+
+int sys_capget(cap_user_header_t hdrp, cap_user_data_t datap) {
+	auto ret = do_syscall(SYS_capget, hdrp, datap);
+	if (int e = sc_error(ret); e)
+		return e;
+	return 0;
+}
+
+int sys_capset(cap_user_header_t hdrp, const cap_user_data_t datap) {
+	auto ret = do_syscall(SYS_capset, hdrp, datap);
+	if (int e = sc_error(ret); e)
+		return e;
 	return 0;
 }
 
@@ -1679,8 +1746,12 @@ static void statfs_to_statvfs(struct statfs *from, struct statvfs *to) {
 		.f_ffree = from->f_ffree,
 		.f_favail = from->f_ffree,
 		.f_fsid = (unsigned long) from->f_fsid.__val[0],
+#if __INTPTR_WIDTH__ == 32
+		.__f_unused = 0,
+#endif
 		.f_flag = from->f_flags,
 		.f_namemax = from->f_namelen,
+		.f_spare = { 0 },
 	};
 }
 
@@ -1712,7 +1783,11 @@ int sys_sysconf(int num, long *ret) {
 			*ret = (ru.rlim_cur == RLIM_INFINITY) ? -1 : ru.rlim_cur;
 			break;
 		}
+		case _SC_NPROCESSORS_CONF:
 		case _SC_NPROCESSORS_ONLN: {
+			/* TODO: glibc seems to try to read sysfs files first:
+			 * `/sys/devices/system/cpu/{online,possible}`, failing that `/proc/stat`.
+			 */
 			cpu_set_t set;
 			CPU_ZERO(&set);
 			if(int e = sys_getaffinity(0, sizeof(set), &set); e) {
@@ -1780,6 +1855,44 @@ int sys_clock_set(int clock, time_t secs, long nanos) {
 	auto ret = do_syscall(SYS_clock_settime, clock, &tp);
 	if (int e = sc_error(ret); e)
 		return e;
+	return 0;
+}
+
+int sys_getlogin_r(char *name, size_t name_len) {
+	int cs = 0;
+	pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &cs);
+
+	int fd;
+	if(sys_open("/proc/self/loginuid", O_RDONLY, 0, &fd))
+		return EINVAL;
+
+
+	char buf[12];
+	ssize_t bytes_read = 0;
+	if(int e = sys_read(fd, buf, sizeof(buf), &bytes_read); e || !bytes_read)
+		return EINVAL;
+
+	char *uid_end = nullptr;
+	auto uid = strtol(buf, &uid_end, 10);
+	if (uid_end == buf || uid < 0)
+		return EINVAL;
+
+	sys_close(fd);
+
+	pthread_setcancelstate(cs, nullptr);
+
+	struct passwd pwd;
+	struct passwd *tpwd;
+	char pwbuf[1024];
+	if (getpwuid_r(uid, &pwd, pwbuf, sizeof(pwbuf), &tpwd) || tpwd == NULL)
+		return EINVAL;
+
+	size_t needed = strlen(pwd.pw_name) + 1;
+	if (needed > name_len)
+		return ERANGE;
+
+	memcpy(name, pwd.pw_name, needed);
+
 	return 0;
 }
 
@@ -2469,6 +2582,21 @@ int sys_shmget(int *shm_id, key_t key, size_t size, int shmflg) {
 	if (int e = sc_error(ret); e)
 		return e;
 	*shm_id = sc_int_result<int>(ret);
+	return 0;
+}
+
+int sys_sigqueue(pid_t pid, int sig, const union sigval val) {
+	siginfo_t si;
+	memset(&si, 0, sizeof(si));
+	si.si_signo = sig;
+	si.si_code = SI_QUEUE;
+	si.si_value = val;
+	si.si_uid = sys_getuid();
+	si.si_pid = sys_getpid();
+
+	auto ret = do_syscall(SYS_rt_sigqueueinfo, pid, sig, &si);
+	if (int e = sc_error(ret); e)
+		return e;
 	return 0;
 }
 
