@@ -222,6 +222,12 @@ if host_machine.system() == 'linux'
 	internal_conf.set10('MLIBC_MAP_DSO_SEGMENTS', true)
 	internal_conf.set10('MLIBC_MMAP_ALLOCATE_DSO', true)
 	subdir('sysdeps/linux')
+elif host_machine.system() == 'unified'
+	rtld_include_dirs += include_directories('sysdeps/unified/include')
+	libc_include_dirs += include_directories('sysdeps/unified/include')
+	internal_conf.set10('MLIBC_MAP_DSO_SEGMENTS', true)
+	internal_conf.set10('MLIBC_MMAP_ALLOCATE_DSO', true)
+	subdir('sysdeps/unified')
 elif host_machine.system() == 'aero'
 	rtld_include_dirs += include_directories('sysdeps/aero/include')
 	libc_include_dirs += include_directories('sysdeps/aero/include')
