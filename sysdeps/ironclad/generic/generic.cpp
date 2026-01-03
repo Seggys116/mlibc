@@ -83,6 +83,12 @@ int sys_open(const char *path, int flags, mode_t mode, int *fd) {
 int sys_openat(int dirfd, const char *path, int flags, mode_t mode, int *fd) {
 	int ret, errno;
 
+	// Check clashing sysdep-implemented files here before we do anything else.
+	if ((flags & O_CREAT) && ((flags & O_WRONLY) == 0)) {
+		return EISDIR;
+	}
+
+	// Attempt to open.
 	int path_len = strlen(path);
 	SYSCALL4(SYSCALL_OPEN, dirfd, path, path_len, flags);
 
@@ -94,7 +100,6 @@ int sys_openat(int dirfd, const char *path, int flags, mode_t mode, int *fd) {
 		return EEXIST;
 	}
 
-	// We implement creating files in this sysdep.
 	if ((errno == ENOENT) && (flags & O_CREAT) && ((flags & O_DIRECTORY) == 0)) {
 		SYSCALL5(SYSCALL_MAKENODE, AT_FDCWD, path, path_len, S_IFREG | mode, 0);
 		if (ret == -1) {
@@ -589,7 +594,9 @@ int sys_ioctl(int fd, unsigned long request, void *arg, int *result) {
 		return errno;
 	}
 
-	*result = ret;
+	if (result != NULL) {
+		*result = ret;
+	}
 	return 0;
 }
 
@@ -618,40 +625,46 @@ int sys_kill(int pid, int sig) {
 
 int sys_dup(int fd, int flags, int *newfd) {
 	int ret, errno;
-	if (flags & O_CLOEXEC) {
-		SYSCALL3(SYSCALL_FCNTL, fd, F_DUPFD_CLOEXEC, 0);
-	} else {
-		SYSCALL3(SYSCALL_FCNTL, fd, F_DUPFD, 0);
+	SYSCALL3(SYSCALL_FCNTL, fd, F_DUPFD, 0);
+
+	if (errno == 0 && flags != 0) {
+		int fcntl_flags = 0;
+		if (flags & O_CLOEXEC) {
+			fcntl_flags |= FD_CLOEXEC;
+		}
+		if (flags & O_CLOFORK) {
+			fcntl_flags |= FD_CLOFORK;
+		}
+		SYSCALL3(SYSCALL_FCNTL, ret, F_SETFD, fcntl_flags);
 	}
 
 	*newfd = ret;
-
-	if (errno == 0) {
-		SYSCALL3(SYSCALL_FCNTL, *newfd, F_SETFD, flags);
-	}
-
 	return errno;
 }
 
 int sys_dup2(int fd, int flags, int newfd) {
+	// We are to do nothing if they are equal.
+	if (fd == newfd) {
+		return 0;
+	}
+
 	int ret = sys_close(newfd);
 	if (ret != 0 && ret != EBADF) {
 		return EBADF;
 	}
 
 	int errno;
-	if (flags & O_CLOEXEC) {
-		SYSCALL3(SYSCALL_FCNTL, fd, F_DUPFD_CLOEXEC, newfd);
-	} else {
-		SYSCALL3(SYSCALL_FCNTL, fd, F_DUPFD, newfd);
-	}
+	SYSCALL3(SYSCALL_FCNTL, fd, F_DUPFD, newfd);
 
-	if (ret != -1 && ret != newfd) {
-		return EBADF;
-	}
-
-	if (errno == 0) {
-		SYSCALL3(SYSCALL_FCNTL, newfd, F_SETFD, flags);
+	if (errno == 0 && flags != 0) {
+		int fcntl_flags = 0;
+		if (flags & O_CLOEXEC) {
+			fcntl_flags |= FD_CLOEXEC;
+		}
+		if (flags & O_CLOFORK) {
+			fcntl_flags |= FD_CLOFORK;
+		}
+		SYSCALL3(SYSCALL_FCNTL, ret, F_SETFD, fcntl_flags);
 	}
 
 	return errno;
@@ -1025,7 +1038,7 @@ int sys_shutdown(int sockfd, int how) {
 
 int sys_setitimer(int which, const struct itimerval *new_value, struct itimerval *old_value) {
 	(void)which; (void)new_value; (void)old_value;
-	return ENOSYS;
+	return 0;
 }
 
 int sys_msg_recv(int fd, struct msghdr *hdr, int flags, ssize_t *length) {
@@ -1071,9 +1084,9 @@ int sys_msg_send(int fd, const struct msghdr *hdr, int flags, ssize_t *length) {
 }
 
 
-int sys_ppoll(struct pollfd *fds, int nfds, const struct timespec *timeout, const sigset_t *sigmask, int *num_events) {
+int sys_ppoll(struct pollfd *fds, nfds_t count, const struct timespec *timeout, const sigset_t *sigmask, int *num_events) {
 	int ret, errno;
-	SYSCALL4(SYSCALL_PPOLL, fds, nfds, timeout, sigmask);
+	SYSCALL4(SYSCALL_PPOLL, fds, count, timeout, sigmask);
 	if (ret == -1) {
 		return errno;
 	}
@@ -1095,6 +1108,11 @@ int sys_pause(void) {
 
 int sys_sigsuspend(const sigset_t *set) {
 	return sys_ppoll(NULL, 0, NULL, set, NULL);
+}
+
+int sys_sigpending(sigset_t *set) {
+	*set = 0;
+	return 0;
 }
 
 int sys_pselect(int nfds, fd_set *read_set, fd_set *write_set,
@@ -1454,6 +1472,10 @@ int sys_openpt(int oflags, int *fd) {
 	if (!(oflags & O_NOCTTY)) {
 		ioctl(*fd, TIOCSCTTY);
 	}
+	if (oflags & O_NONBLOCK) {
+		fdflags = fcntl(*fd, F_GETFL);
+		fcntl(*fd, F_SETFL, fdflags | O_NONBLOCK);
+	}
 
 	return e;
 }
@@ -1615,16 +1637,16 @@ int sys_openpty(int *mfd, int *sfd, char *name, const struct termios *ios, const
 
 	if (ios == NULL) {
 		struct termios termios = {};
-		termios.c_iflag = BRKINT | IGNPAR | ICRNL | IXON | IMAXBEL;
+		termios.c_iflag = BRKINT | IGNPAR | ICRNL | IXON;
 		termios.c_oflag = OPOST | ONLCR;
 		termios.c_cflag = CS8 | CREAD;
-		termios.c_lflag = ISIG | ICANON | ECHO | ECHOE | ECHOK | ECHOCTL | ECHOKE;
+		termios.c_lflag = ISIG | ICANON | ECHO | ECHOE | ECHOK;
 		termios.c_cc[VINTR] = CTRL('C');
 		termios.c_cc[VERASE] = 127; // Delete.
 		termios.c_cc[VEOF] = CTRL('D');
 		termios.c_cc[VSUSP] = CTRL('Z');
-		termios.ibaud = 38400;
-		termios.obaud = 38400;
+		termios.c_ibaud = 38400;
+		termios.c_obaud = 38400;
 		ret = tcsetattr(*mfd, TCSANOW, &termios);
 	} else {
 		ret = tcsetattr(*mfd, TCSANOW, ios);

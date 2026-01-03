@@ -23,6 +23,7 @@
 #include <mlibc/locale.hpp>
 #include <mlibc/bitutil.hpp>
 #include <mlibc/strings.hpp>
+#include <mlibc/time.hpp>
 
 #include <frg/mutex.hpp>
 
@@ -31,11 +32,21 @@
 // America/New_York is a common default.
 #define TZ_DEFAULT_RULE_STRING ",M3.2.0,M11.1.0"
 
+namespace {
+
 const char __utc[] = "UTC";
+
+constexpr size_t tznameNormal = 0;
+constexpr size_t tznameDST = 1;
+
+frg::string<MemoryAllocator> tznameStorage[2] = { {getAllocator()}, {getAllocator()} };
+
+} // namespace
 
 // Variables defined by POSIX.
 int daylight;
 long timezone;
+// [0] holds normal time, [1] holds DST
 char *tzname[2];
 
 static FutexLock __time_lock;
@@ -97,360 +108,7 @@ struct tm *localtime(const time_t *unix_gmt) {
 
 size_t strftime(char *__restrict dest, size_t max_size,
 		const char *__restrict format, const struct tm *__restrict tm) {
-	auto c = format;
-	auto p = dest;
-	[[maybe_unused]] bool use_alternative_symbols = false;
-	[[maybe_unused]] bool use_alternative_era_format = false;
-
-	while(*c) {
-		int chunk;
-		auto space = (dest + max_size) - p;
-		__ensure(space >= 0);
-
-		if(*c != '%') {
-			if(!space)
-				return 0;
-			*p = *c;
-			c++;
-			p++;
-			continue;
-		}
-
-		if(*(c + 1) == 'O') {
-			std::array<char, 15> valid{{'B', 'b', 'd', 'e', 'H', 'I', 'm', 'M', 'S', 'u', 'U', 'V', 'w', 'W', 'y'}};
-			auto next = *(c + 2);
-			if(std::find(valid.begin(), valid.end(), next) != valid.end()) {
-				use_alternative_symbols = true;
-				c++;
-			} else {
-				*p = '%';
-				p++;
-				c++;
-				*p = 'O';
-				p++;
-				c++;
-				continue;
-			}
-		} else if(*(c + 1) == 'E') {
-			std::array<char, 6> valid{{'c', 'C', 'x', 'X', 'y', 'Y'}};
-			auto next = *(c + 2);
-			if(std::find(valid.begin(), valid.end(), next) != valid.end()) {
-				use_alternative_era_format = true;
-				c++;
-			} else {
-				*p = '%';
-				p++;
-				c++;
-				*p = 'E';
-				p++;
-				c++;
-				continue;
-			}
-		}
-
-		switch(*++c) {
-		case 'Y': {
-			chunk = snprintf(p, space, "%d", 1900 + tm->tm_year);
-			if(chunk >= space)
-				return 0;
-			p += chunk;
-			c++;
-			break;
-		}
-		case 'm': {
-			chunk = snprintf(p, space, "%.2d", tm->tm_mon + 1);
-			if(chunk >= space)
-				return 0;
-			p += chunk;
-			c++;
-			break;
-		}
-		case 'd': {
-			chunk = snprintf(p, space, "%.2d", tm->tm_mday);
-			if(chunk >= space)
-				return 0;
-			p += chunk;
-			c++;
-			break;
-		}
-		case 'z': {
-			auto min = tm->tm_gmtoff / 60;
-			auto diff = ((min / 60) * 100) + (min % 60);
-			chunk = snprintf(p, space, "%c%04d", diff >= 0 ? '+' : '-', abs(diff));
-			if(chunk >= space)
-				return 0;
-			p += chunk;
-			c++;
-			break;
-		}
-		case 'Z': {
-			chunk = snprintf(p, space, "%s", "UTC");
-			if(chunk >= space)
-				return 0;
-			p += chunk;
-			c++;
-			break;
-		}
-		case 'H': {
-			chunk = snprintf(p, space, "%.2i", tm->tm_hour);
-			if(chunk >= space)
-				return 0;
-			p += chunk;
-			c++;
-			break;
-		}
-		case 'M': {
-			chunk = snprintf(p, space, "%.2i", tm->tm_min);
-			if(chunk >= space)
-				return 0;
-			p += chunk;
-			c++;
-			break;
-		}
-		case 'S': {
-			chunk = snprintf(p, space, "%.2d", tm->tm_sec);
-			if(chunk >= space)
-				return 0;
-			p += chunk;
-			c++;
-			break;
-		}
-		case 'R': {
-			chunk = snprintf(p, space, "%.2i:%.2i", tm->tm_hour, tm->tm_min);
-			if(chunk >= space)
-				return 0;
-			p += chunk;
-			c++;
-			break;
-		}
-		case 'T': {
-			chunk = snprintf(p, space, "%.2i:%.2i:%.2i", tm->tm_hour, tm->tm_min, tm->tm_sec);
-			if(chunk >= space)
-				return 0;
-			p += chunk;
-			c++;
-			break;
-		}
-		case 'F': {
-			chunk = snprintf(p, space, "%d-%.2d-%.2d", 1900 + tm->tm_year, tm->tm_mon + 1,
-					tm->tm_mday);
-			if(chunk >= space)
-				return 0;
-			p += chunk;
-			c++;
-			break;
-		}
-		case 'D': {
-			chunk = snprintf(p, space, "%.2d/%.2d/%.2d", tm->tm_mon + 1, tm->tm_mday, (tm->tm_year + 1900) % 100);
-			if(chunk >= space)
-				return 0;
-			p += chunk;
-			c++;
-			break;
-		}
-		case 'a': {
-			int day = tm->tm_wday;
-			if(day < 0 || day > 6)
-				__ensure(!"Day not in bounds.");
-
-			chunk = snprintf(p, space, "%s", mlibc::nl_langinfo(ABDAY_1 + day));
-			if(chunk >= space)
-				return 0;
-			p += chunk;
-			c++;
-			break;
-		}
-		case 'b':
-		case 'B':
-		case 'h': {
-			int mon = tm->tm_mon;
-			if(mon < 0 || mon > 11)
-				__ensure(!"Month not in bounds.");
-
-			nl_item item = (*c == 'B') ? MON_1 : ABMON_1;
-
-			chunk = snprintf(p, space, "%s", mlibc::nl_langinfo(item + mon));
-			if(chunk >= space)
-				return 0;
-			p += chunk;
-			c++;
-			break;
-		}
-		case 'c': {
-			int day = tm->tm_wday;
-			if(day < 0 || day > 6)
-				__ensure(!"Day not in bounds.");
-
-			int mon = tm->tm_mon;
-			if(mon < 0 || mon > 11)
-				__ensure(!"Month not in bounds.");
-
-			chunk = snprintf(p, space, "%s %s %2d %.2i:%.2i:%.2d %d", mlibc::nl_langinfo(ABDAY_1 + day),
-					mlibc::nl_langinfo(ABMON_1 + mon), tm->tm_mday, tm->tm_hour, tm->tm_min, tm->tm_sec, 1900 + tm->tm_year);
-			if(chunk >= space)
-				return 0;
-			p += chunk;
-			c++;
-			break;
-		}
-		case 'e': {
-			chunk = snprintf(p, space, "%2d", tm->tm_mday);
-			if(chunk >= space)
-				return 0;
-			p += chunk;
-			c++;
-			break;
-		}
-		case 'l': {
-			int hour = tm->tm_hour;
-			if(!hour)
-				hour = 12;
-			if(hour > 12)
-				hour -= 12;
-			chunk = snprintf(p, space, "%2d", hour);
-			if(chunk >= space)
-				return 0;
-			p += chunk;
-			c++;
-			break;
-		}
-		case 'k': {
-			chunk = snprintf(p, space, "%2d", tm->tm_hour);
-			if(chunk >= space)
-				return 0;
-			p += chunk;
-			c++;
-			break;
-		}
-		case 'I': {
-			int hour = tm->tm_hour;
-			if(!hour)
-				hour = 12;
-			if(hour > 12)
-				hour -= 12;
-			chunk = snprintf(p, space, "%.2d", hour);
-			if(chunk >= space)
-				return 0;
-			p += chunk;
-			c++;
-			break;
-		}
-		case 'p': {
-			chunk = snprintf(p, space, "%s", mlibc::nl_langinfo((tm->tm_hour < 12) ? AM_STR : PM_STR));
-			if(chunk >= space)
-				return 0;
-			p += chunk;
-			c++;
-			break;
-		}
-		case 'P': {
-			char *str = mlibc::nl_langinfo((tm->tm_hour < 12) ? AM_STR : PM_STR);
-			char *str_lower = reinterpret_cast<char *>(getAllocator().allocate(strlen(str) + 1));
-			for(size_t i = 0; str[i]; i++)
-				str_lower[i] = tolower(str[i]);
-			str_lower[strlen(str)] = '\0';
-
-			chunk = snprintf(p, space, "%s", str_lower);
-			if(chunk >= space)
-				return 0;
-			p += chunk;
-			c++;
-			break;
-		}
-		case 'C': {
-			chunk = snprintf(p, space, "%.2d", (1900 + tm->tm_year) / 100);
-			if(chunk >= space)
-				return 0;
-			p += chunk;
-			c++;
-			break;
-		}
-		case 'y': {
-			chunk = snprintf(p, space, "%.2d", (1900 + tm->tm_year) % 100);
-			if(chunk >= space)
-				return 0;
-			p += chunk;
-			c++;
-			break;
-		}
-		case 'j': {
-			chunk = snprintf(p, space, "%.3d", tm->tm_yday + 1);
-			if(chunk >= space)
-				return 0;
-			p += chunk;
-			c++;
-			break;
-		}
-		case 'A': {
-			chunk = snprintf(p, space, "%s", mlibc::nl_langinfo(DAY_1 + tm->tm_wday));
-			if(chunk >= space)
-				return 0;
-			p += chunk;
-			c++;
-			break;
-		}
-		case 'r': {
-			int hour = tm->tm_hour;
-			if(!hour)
-				hour = 12;
-			if(hour > 12)
-				hour -= 12;
-			chunk = snprintf(p, space, "%.2i:%.2i:%.2i %s", hour, tm->tm_min, tm->tm_sec,
-				mlibc::nl_langinfo((tm->tm_hour < 12) ? AM_STR : PM_STR));
-			if(chunk >= space)
-				return 0;
-			p += chunk;
-			c++;
-			break;
-		}
-		case '%': {
-			chunk = snprintf(p, space, "%%");
-			if(chunk >= space)
-				return 0;
-			p += chunk;
-			c++;
-			break;
-		}
-		case 'n': {
-			chunk = snprintf(p, space, "\n");
-			if(chunk >= space)
-				return 0;
-			p += chunk;
-			c++;
-			break;
-		}
-		case 't': {
-			chunk = snprintf(p, space, "\t");
-			if(chunk >= space)
-				return 0;
-			p += chunk;
-			c++;
-			break;
-		}
-		case 'x': {
-			return strftime(dest, max_size, mlibc::nl_langinfo(D_FMT), tm);
-		}
-		case 'X': {
-			return strftime(dest, max_size, mlibc::nl_langinfo(T_FMT), tm);
-		}
-		case '\0': {
-			chunk = snprintf(p, space, "%%");
-			if(chunk >= space)
-				return 0;
-			p += chunk;
-			break;
-		}
-		default:
-			mlibc::panicLogger() << "mlibc: strftime unknown format type: " << c << frg::endlog;
-		}
-	}
-
-	auto space = (dest + max_size) - p;
-	if(!space)
-		return 0;
-
-	*p = '\0';
-	return (p - dest);
+	return mlibc::strftime(dest, max_size, format, tm, mlibc::getActiveLocale());
 }
 
 size_t wcsftime(wchar_t *__restrict, size_t, const wchar_t *__restrict,
@@ -853,12 +511,14 @@ bool parse_tzfile(const char *tz) {
 				+ i * sizeof(ttinfo), sizeof(ttinfo));
 		time_info.tt_gmtoff = mlibc::bit_util<uint32_t>::byteswap(time_info.tt_gmtoff);
 		if (!time_info.tt_isdst && !found_std) {
-			tzname[0] = abbrevs + time_info.tt_abbrind;
+			tznameStorage[tznameNormal] = {abbrevs + time_info.tt_abbrind, getAllocator()};
+			tzname[tznameNormal] = tznameStorage[tznameNormal].data();
 			timezone = -time_info.tt_gmtoff;
 			found_std = true;
 		}
 		if (time_info.tt_isdst && !found_dst) {
-			tzname[1] = abbrevs + time_info.tt_abbrind;
+			tznameStorage[tznameDST] = {abbrevs + time_info.tt_abbrind, getAllocator()};
+			tzname[tznameDST] = tznameStorage[tznameDST].data();
 			timezone = -time_info.tt_gmtoff;
 			daylight = 1;
 			found_dst = true;
@@ -899,8 +559,8 @@ void do_tzset(void) {
 	daylight = 0;
 
 	if (!parse_tz(tz, tz_name, tz_name_dst, tz_name_max)) {
-		tzname[0] = tz_name;
-		tzname[1] = tz_name_dst;
+		tzname[tznameNormal] = tz_name;
+		tzname[tznameDST] = tz_name_dst;
 		return;
 	}
 
@@ -908,8 +568,8 @@ void do_tzset(void) {
 	if (parse_tzfile(tz)) {
 		// This should always succeed.
 		__ensure(!parse_tz("UTC0", tz_name, tz_name_dst, tz_name_max));
-		tzname[0] = tz_name;
-		tzname[1] = tz_name_dst;
+		tzname[tznameNormal] = tz_name;
+		tzname[tznameDST] = tz_name_dst;
 	}
 }
 
@@ -922,7 +582,7 @@ void tzset(void) {
 
 // POSIX extensions.
 
-int nanosleep(const struct timespec *req, struct timespec *) {
+int nanosleep(const struct timespec *req, struct timespec *rem) {
 	if (req->tv_sec < 0 || req->tv_nsec > 999999999 || req->tv_nsec < 0) {
 		errno = EINVAL;
 		return -1;
@@ -936,12 +596,13 @@ int nanosleep(const struct timespec *req, struct timespec *) {
 	struct timespec tmp = *req;
 
 	int e = mlibc::sys_sleep(&tmp.tv_sec, &tmp.tv_nsec);
-	if (!e) {
+	if (!e)
 		return 0;
-	} else {
-		errno = e;
-		return -1;
-	}
+	else if (e == EINTR)
+		*rem = tmp;
+
+	errno = e;
+	return -1;
 }
 
 int clock_getres(clockid_t clockid, struct timespec *res) {
@@ -961,10 +622,36 @@ int clock_gettime(clockid_t clock, struct timespec *time) {
 	return 0;
 }
 
-int clock_nanosleep(clockid_t clockid, int, const struct timespec *req, struct timespec *) {
-	mlibc::infoLogger() << "clock_nanosleep is implemented as nanosleep!" << frg::endlog;
+int clock_nanosleep(clockid_t clockid, int flags, const struct timespec *req, struct timespec *rem) {
 	__ensure(clockid == CLOCK_REALTIME || clockid == CLOCK_MONOTONIC);
-	return nanosleep(req, nullptr);
+
+	if (flags & TIMER_ABSTIME) {
+		time_t secs = 0;
+		long nanos = 0;
+		if(int e = mlibc::sys_clock_get(clockid, &secs, &nanos); e) {
+			errno = e;
+			return -1;
+		}
+
+		struct timespec relativeTime;
+
+		if (secs > req->tv_sec)
+			return 0;
+		else if (secs == req->tv_sec && nanos >= req->tv_nsec)
+			return 0;
+		else {
+			relativeTime.tv_sec = req->tv_sec - secs;
+			relativeTime.tv_nsec = req->tv_nsec - nanos;
+			if (relativeTime.tv_nsec < 0) {
+				relativeTime.tv_sec -= 0;
+				relativeTime.tv_nsec += 1e9;
+			}
+		}
+
+		return nanosleep(&relativeTime, rem);
+	}
+
+	return nanosleep(req, rem);
 }
 
 int clock_settime(clockid_t clock, const struct timespec *time) {
@@ -1095,7 +782,7 @@ bool is_in_dst(time_t unix_gmt) {
 	}
 }
 
-int unix_local_from_gmt_tzfile(time_t unix_gmt, time_t *offset, bool *dst, char **tm_zone) {
+int unix_local_from_gmt_tzfile(time_t unix_gmt, time_t *offset, bool *dst, frg::string<MemoryAllocator> &tm_zone) {
 	const char *tz = getenv("TZ");
 
 	if (!tz || *tz == '\0')
@@ -1179,7 +866,7 @@ int unix_local_from_gmt_tzfile(time_t unix_gmt, time_t *offset, bool *dst, char 
 
 	*offset = time_info.tt_gmtoff;
 	*dst = time_info.tt_isdst;
-	*tm_zone = abbrevs + time_info.tt_abbrind;
+	tm_zone = {abbrevs + time_info.tt_abbrind, getAllocator()};
 	return 0;
 }
 
@@ -1189,13 +876,17 @@ int unix_local_from_gmt_tzfile(time_t unix_gmt, time_t *offset, bool *dst, char 
 int unix_local_from_gmt(time_t unix_gmt, time_t *offset, bool *dst, char **tm_zone) {
 	do_tzset();
 
-	if (daylight && rules[0].type == TZFILE)
-		return unix_local_from_gmt_tzfile(unix_gmt, offset, dst, tm_zone);
+	if (daylight && rules[0].type == TZFILE) {
+		int ret = unix_local_from_gmt_tzfile(unix_gmt, offset, dst, tznameStorage[tznameDST]);
+		if (ret == 0)
+			*tm_zone = tzname[tznameDST] = tznameStorage[tznameDST].data();
+		return ret;
+	}
 
 	if (daylight && is_in_dst(unix_gmt)) {
-		*offset = tt_infos[1].tt_gmtoff;
+		*offset = tt_infos[tznameDST].tt_gmtoff;
 		*dst = true;
-		*tm_zone = tzname[1];
+		*tm_zone = tzname[tznameDST];
 		return 0;
 	}
 
@@ -1281,7 +972,7 @@ char *asctime_r(const struct tm *tm, char *buf) {
 	static char month_names[12][4] =
 		{ "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct",
 		  "Nov", "Dec" };
-	sprintf(buf, "%.3s %.3s%3d %.2d:%.2d%.2d %d\n",
+	sprintf(buf, "%.3s %.3s%3d %.2d:%.2d:%.2d %d\n",
 				 weekday_names[tm->tm_wday],
 				 month_names[tm->tm_mon],
 				 tm->tm_mday,

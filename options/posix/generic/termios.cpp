@@ -4,7 +4,6 @@
 
 #include <errno.h>
 #include <termios.h>
-#include <sys/ioctl.h>
 
 #include <bits/ensure.h>
 #include <mlibc/posix-sysdeps.hpp>
@@ -80,21 +79,45 @@ int tcgetattr(int fd, struct termios *attr) {
 }
 
 pid_t tcgetsid(int fd) {
-	int sid;
-	if(ioctl(fd, TIOCGSID, &sid) < 0) {
+	int sid, scratch;
+	MLIBC_CHECK_OR_ENOSYS(mlibc::sys_ioctl, -1);
+	if(int e = mlibc::sys_ioctl(fd, TIOCGSID, &sid, &scratch); e) {
+		errno = e;
 		return -1;
 	}
 	return sid;
 }
 
-int tcsendbreak(int, int) {
-	__ensure(!"Not implemented");
-	__builtin_unreachable();
+int tcsendbreak(int fd, int dur) {
+	auto sysdep = MLIBC_CHECK_OR_ENOSYS(mlibc::sys_tcsendbreak, -1);
+	if(int e = sysdep(fd, dur); e) {
+		errno = e;
+		return -1;
+	}
+	return 0;
 }
 
 int tcsetattr(int fd, int opts, const struct termios *attr) {
 	MLIBC_CHECK_OR_ENOSYS(mlibc::sys_tcsetattr, -1);
 	if(int e = mlibc::sys_tcsetattr(fd, opts, attr); e) {
+		errno = e;
+		return -1;
+	}
+	return 0;
+}
+
+int tcgetwinsize(int fd, struct winsize *winsz) {
+	auto sysdep = MLIBC_CHECK_OR_ENOSYS(mlibc::sys_tcgetwinsize, -1);
+	if(int e = sysdep(fd, winsz); e) {
+		errno = e;
+		return -1;
+	}
+	return 0;
+}
+
+int tcsetwinsize(int fd, const struct winsize *winsz) {
+	auto sysdep = MLIBC_CHECK_OR_ENOSYS(mlibc::sys_tcsetwinsize, -1);
+	if(int e = sysdep(fd, winsz); e) {
 		errno = e;
 		return -1;
 	}

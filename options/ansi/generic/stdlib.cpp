@@ -4,13 +4,13 @@
 #include <stdlib.h>
 #include <string.h>
 #include <signal.h>
-#include <ctype.h>
 #include <stdio.h>
 #include <wchar.h>
 #include <setjmp.h>
 #include <limits.h>
 
 #include <frg/random.hpp>
+#include <frg/vector.hpp>
 #include <mlibc/debug.hpp>
 #include <bits/ensure.h>
 #include <bits/sigset_t.h>
@@ -22,6 +22,7 @@
 #include <mlibc/strtol.hpp>
 #include <mlibc/threads.hpp>
 #include <mlibc/global-config.hpp>
+#include <mlibc/exit.hpp>
 
 #if __MLIBC_POSIX_OPTION
 #include <pthread.h>
@@ -57,7 +58,8 @@ long long atoll(const char *string) {
 // to avoid exporting sigprocmask when posix is disabled.
 int sigprocmask(int, const sigset_t *__restrict, sigset_t *__restrict);
 extern "C" {
-	__attribute__((__returns_twice__)) int __sigsetjmp(sigjmp_buf buffer, int savesigs) {
+	[[gnu::visibility("hidden")]]
+	int __sigsetjmp(sigjmp_buf buffer, int savesigs) {
 		buffer[0].__savesigs = savesigs;
 		if (savesigs)
 			sigprocmask(0, nullptr, &buffer[0].__sigset);
@@ -74,13 +76,13 @@ __attribute__((__noreturn__)) void siglongjmp(sigjmp_buf buffer, int value) {
 }
 
 double strtod(const char *__restrict string, char **__restrict end) {
-	return mlibc::strtofp<double>(string, end);
+	return mlibc::strtofp<double>(string, end, mlibc::getActiveLocale());
 }
 float strtof(const char *__restrict string, char **__restrict end) {
-	return mlibc::strtofp<float>(string, end);
+	return mlibc::strtofp<float>(string, end, mlibc::getActiveLocale());
 }
 long double strtold(const char *__restrict string, char **__restrict end) {
-	return mlibc::strtofp<long double>(string, end);
+	return mlibc::strtofp<long double>(string, end, mlibc::getActiveLocale());
 }
 
 long strtol(const char *__restrict string, char **__restrict end, int base) {
@@ -196,16 +198,28 @@ int atexit(void (*func)(void)) {
 	__cxa_atexit((void (*) (void *))func, nullptr, nullptr);
 	return 0;
 }
+
+namespace {
+
+frg::vector<void (*)(void), MemoryAllocator> quickExitQueue{getAllocator()};
+__mlibc_mutex quickExitQueueMutex = __MLIBC_THREAD_MUTEX_INITIALIZER;
+
+} // namespace
+
 int at_quick_exit(void (*func)(void)) {
-	(void)func;
-	__ensure(!"Not implemented");
-	__builtin_unreachable();
+	mlibc::thread_mutex_lock(&quickExitQueueMutex);
+	quickExitQueue.push(func);
+	mlibc::thread_mutex_unlock(&quickExitQueueMutex);
+
+	return 0;
 }
 
 void exit(int status) {
 	// for concurrent calls to exit() or quick_exit(), all but the first shall block until termination
 	// see https://austingroupbugs.net/view.php?id=1845
 	mlibc::thread_mutex_lock(&exit_mutex);
+
+	mlibc::processIsExiting.store(true, std::memory_order_relaxed);
 
 	__mlibc_do_finalize();
 	mlibc::sys_exit(status);
@@ -216,9 +230,15 @@ void _Exit(int status) {
 }
 
 // getenv() is provided by POSIX
-void quick_exit(int) {
-	__ensure(!"Not implemented");
-	__builtin_unreachable();
+void quick_exit(int status) {
+	mlibc::thread_mutex_lock(&quickExitQueueMutex);
+
+	while (!quickExitQueue.empty()) {
+		auto func = quickExitQueue.pop();
+		func();
+	}
+
+	mlibc::sys_exit(status);
 }
 
 extern char **environ;
@@ -390,8 +410,11 @@ int mblen(const char *mbs, size_t mb_limit) {
 		return cc->has_shift_states;
 	}
 
-	if(auto e = cc->decode_wtranscode(nseq, wseq, mblen_state); e != mlibc::charcode_error::null)
-		__ensure(!"decode_wtranscode() errors are not handled");
+	if(auto e = cc->decode_wtranscode(nseq, wseq, mblen_state); e != mlibc::charcode_error::null) {
+		__ensure(e == mlibc::charcode_error::illegal_input || e == mlibc::charcode_error::input_underflow);
+		errno = EILSEQ;
+		return -1;
+	}
 	return nseq.it - mbs;
 }
 
@@ -440,9 +463,15 @@ int mbtowc(wchar_t *__restrict wc, const char *__restrict mb, size_t max_size) {
 	}
 }
 
-int wctomb(char *, wchar_t) {
-	__ensure(!"Not implemented");
-	__builtin_unreachable();
+int wctomb(char *s, wchar_t wc) {
+	static mbstate_t state;
+
+	if (s == nullptr) {
+		memset(&state, 0, sizeof(state));
+		return 0;
+	}
+
+    return wcrtomb(s, wc, &state);
 }
 
 size_t mbstowcs(wchar_t *__restrict wcs, const char *__restrict mbs, size_t wc_limit) {
@@ -453,14 +482,17 @@ size_t mbstowcs(wchar_t *__restrict wcs, const char *__restrict mbs, size_t wc_l
 
 	if(!wcs) {
 		size_t size;
-		if(auto e = cc->decode_wtranscode_length(nseq, &size, st); e != mlibc::charcode_error::null)
-			__ensure(!"decode_wtranscode() errors are not handled");
+		if(auto e = cc->decode_wtranscode_length(nseq, &size, st); e != mlibc::charcode_error::null) {
+			__ensure(e == mlibc::charcode_error::illegal_input || e == mlibc::charcode_error::input_underflow);
+			errno = EILSEQ;
+			return static_cast<size_t>(-1);
+		}
 		return size;
 	}
 
 	if(auto e = cc->decode_wtranscode(nseq, wseq, st); e != mlibc::charcode_error::null) {
-		__ensure(!"decode_wtranscode() errors are not handled");
-		__builtin_unreachable();
+		errno = EILSEQ;
+		return size_t(-1);
 	}else{
 		size_t n = wseq.it - wcs;
 		if(n < wc_limit) // Null-terminate resulting wide string.

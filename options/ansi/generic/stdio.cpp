@@ -8,6 +8,7 @@
 #include <wchar.h>
 #include <ctype.h>
 #include <limits.h>
+#include <math.h>
 
 #include <abi-bits/fcntl.h>
 
@@ -17,7 +18,10 @@
 #include <mlibc/allocator.hpp>
 #include <mlibc/debug.hpp>
 #include <mlibc/file-io.hpp>
+#include <mlibc/locale.hpp>
 #include <mlibc/ansi-sysdeps.hpp>
+#include <mlibc/stdlib.hpp>
+#include <mlibc/global-config.hpp>
 #include <frg/mutex.hpp>
 #include <frg/expected.hpp>
 #include <frg/printf.hpp>
@@ -25,7 +29,14 @@
 template<typename F>
 struct PrintfAgent {
 	PrintfAgent(F *formatter, frg::va_struct *vsp)
-	: _formatter{formatter}, _vsp{vsp} { }
+	: _formatter{formatter}, _vsp{vsp} {
+		auto l = mlibc::getActiveLocale();
+		locale_opts = frg::locale_options(
+			l->numeric.get(DECIMAL_POINT).asString().data(),
+			l->numeric.get(THOUSANDS_SEP).asString().data(),
+			reinterpret_cast<const char *>(l->numeric.get(GROUPING).asByteSpan().data())
+		);
+	}
 
 	frg::expected<frg::format_error> operator() (char c) {
 		_formatter->append(c);
@@ -42,7 +53,7 @@ struct PrintfAgent {
 		case 'c':
 			if (szmod == frg::printf_size_mod::long_size) {
 				char c_buf[MB_LEN_MAX];
-				auto c = static_cast<wchar_t>(va_arg(_vsp->args, wint_t));
+				auto c = static_cast<wchar_t>(frg::pop_arg<wint_t>(_vsp, &opts));
 				mbstate_t shift_state = {};
 				size_t res = wcrtomb(c_buf, c, &shift_state);
 				if (res == size_t(-1))
@@ -56,10 +67,10 @@ struct PrintfAgent {
 			frg::do_printf_chars(*_formatter, t, opts, szmod, _vsp);
 			break;
 		case 'd': case 'i': case 'o': case 'x': case 'X': case 'b': case 'B': case 'u':
-			frg::do_printf_ints(*_formatter, t, opts, szmod, _vsp);
+			frg::do_printf_ints(*_formatter, t, opts, szmod, _vsp, locale_opts);
 			break;
-		case 'f': case 'F': case 'g': case 'G': case 'e': case 'E':
-			frg::do_printf_floats(*_formatter, t, opts, szmod, _vsp);
+		case 'f': case 'F': case 'g': case 'G': case 'e': case 'E': case 'a': case 'A':
+			frg::do_printf_floats(*_formatter, t, opts, szmod, _vsp, locale_opts);
 			break;
 		case 'm':
 			__ensure(!opts.fill_zeros);
@@ -73,34 +84,34 @@ struct PrintfAgent {
 		case 'n': {
 			switch(szmod) {
 			case frg::printf_size_mod::default_size: {
-				auto p = va_arg(_vsp->args, int *);
+				auto p = frg::pop_arg<int *>(_vsp, &opts);
 				*p = _formatter->count;
 			} break;
 			case frg::printf_size_mod::char_size: {
-				auto p = va_arg(_vsp->args, signed char *);
+				auto p = frg::pop_arg<signed char *>(_vsp, &opts);
 				*p = static_cast<signed char>(_formatter->count);
 			} break;
 			case frg::printf_size_mod::short_size: {
-				auto p = va_arg(_vsp->args, short *);
+				auto p = frg::pop_arg<short *>(_vsp, &opts);
 				*p = static_cast<short>(_formatter->count);
 			} break;
 			case frg::printf_size_mod::long_size: {
-				auto p = va_arg(_vsp->args, long *);
+				auto p = frg::pop_arg<long *>(_vsp, &opts);
 				*p = static_cast<long>(_formatter->count);
 			} break;
 			case frg::printf_size_mod::longlong_size: {
-				auto p = va_arg(_vsp->args, long long *);
+				auto p = frg::pop_arg<long long *>(_vsp, &opts);
 				*p = static_cast<long long>(_formatter->count);
 			} break;
 			case frg::printf_size_mod::longdouble_size:
 				__ensure(!"Illegal size for %n printf modifier");
 				break;
 			case frg::printf_size_mod::native_size: {
-				auto p = va_arg(_vsp->args, ptrdiff_t *);
+				auto p = frg::pop_arg<ptrdiff_t *>(_vsp, &opts);
 				*p = static_cast<ptrdiff_t>(_formatter->count);
 			} break;
 			case frg::printf_size_mod::intmax_size: {
-				auto p = va_arg(_vsp->args, intmax_t *);
+				auto p = frg::pop_arg<intmax_t *>(_vsp, &opts);
 				*p = static_cast<intmax_t>(_formatter->count);
 			} break;
 			}
@@ -116,8 +127,30 @@ struct PrintfAgent {
 		return {};
 	}
 
+	std::optional<frg::printf_arg_type> format_type(char t, frg::printf_size_mod sz) {
+		switch(t) {
+			case 'c':
+				if (sz == frg::printf_size_mod::long_size)
+					return frg::printf_arg_type::WCHAR;
+				else
+					return frg::printf_arg_type::CHAR;
+			case 's': case 'n':
+				return frg::printf_arg_type::POINTER;
+			case 'f': case 'F': case 'g': case 'G': case 'e': case 'E': case 'a': case 'A':
+				return frg::printf_arg_type::DOUBLE;
+			case 'd': case 'i': case 'b': case 'B': case 'o': case 'x': case 'X': case 'u':
+				return frg::printf_arg_type::INT;
+			default:
+				_formatter->append("unknown format '");
+				_formatter->append(t);
+				_formatter->append('\'');
+				return std::nullopt;
+		}
+	}
+
 private:
 	F *_formatter;
+	frg::locale_options locale_opts;
 	frg::va_struct *_vsp;
 };
 
@@ -275,13 +308,44 @@ int renameat(int olddirfd, const char *old_path, int newdirfd, const char *new_p
 }
 
 FILE *tmpfile(void) {
-	__ensure(!"Not implemented");
-	__builtin_unreachable();
+	MLIBC_CHECK_OR_ENOSYS(mlibc::sys_unlinkat, nullptr);
+
+	int fd = 0;
+	char pattern[] = "/tmp/tmpfile_XXXXXX";
+	int res = mlibc::mkostemps(pattern, 0, 0, &fd);
+	if (res)
+		return nullptr;
+
+	res = mlibc::sys_unlinkat(AT_FDCWD, pattern, 0);
+	if (res) {
+		mlibc::sys_close(fd);
+		errno = res;
+		return nullptr;
+	}
+
+	return frg::construct<mlibc::fd_file>(getAllocator(), fd, mlibc::file_dispose_cb<mlibc::fd_file>);
+
 }
 
-char *tmpnam(char *) {
-	__ensure(!"Not implemented");
-	__builtin_unreachable();
+char *tmpnam(char *buf) {
+	static thread_local char internalBuffer[L_tmpnam];
+	char *result = buf ? buf : internalBuffer;
+
+	for (size_t i = 0; i < 100; i++) {
+		int ret = snprintf(result, L_tmpnam, "/tmp/tmpnam_%06X", rand() & 0xFFFFFF);
+		if (ret < 18)
+			return nullptr;
+
+		int fd;
+		ret = mlibc::sys_open(result, O_RDONLY, 0666, &fd);
+		if (ret == 0) {
+			mlibc::sys_close(fd);
+		} else {
+			return result;
+		}
+	}
+
+	return nullptr;
 }
 
 // fflush() is provided by the POSIX sublibrary
@@ -311,6 +375,7 @@ void setbuffer(FILE *f, char *buf, size_t size) {
 	setvbuf(f, buf, buf ? _IOFBF : _IONBF, size);
 }
 
+// byte-oriented (POSIX)
 int fprintf(FILE *__restrict stream, const char *__restrict format, ...) {
 	va_list args;
 	va_start(args, format);
@@ -319,6 +384,7 @@ int fprintf(FILE *__restrict stream, const char *__restrict format, ...) {
 	return result;
 }
 
+// byte-oriented (POSIX)
 int fscanf(FILE *__restrict stream, const char *__restrict format, ...) {
 	va_list args;
 	va_start(args, format);
@@ -327,6 +393,7 @@ int fscanf(FILE *__restrict stream, const char *__restrict format, ...) {
 	return result;
 }
 
+// byte-oriented (POSIX)
 int printf(const char *__restrict format, ...) {
 	va_list args;
 	va_start(args, format);
@@ -336,19 +403,19 @@ int printf(const char *__restrict format, ...) {
 }
 
 namespace {
-	enum {
-		SCANF_TYPE_CHAR,
-		SCANF_TYPE_SHORT,
-		SCANF_TYPE_INTMAX,
-		SCANF_TYPE_L,
-		SCANF_TYPE_LL,
-		SCANF_TYPE_PTRDIFF,
-		SCANF_TYPE_SIZE_T,
-		SCANF_TYPE_INT
-	};
-} // namespace
 
-static void store_int(void *dest, unsigned int size, unsigned long long i) {
+	enum {
+	SCANF_TYPE_CHAR,
+	SCANF_TYPE_SHORT,
+	SCANF_TYPE_INTMAX,
+	SCANF_TYPE_L,
+	SCANF_TYPE_LL,
+	SCANF_TYPE_PTRDIFF,
+	SCANF_TYPE_SIZE_T,
+	SCANF_TYPE_INT
+};
+
+void store_int(void *dest, unsigned int size, unsigned long long i) {
 	switch (size) {
 		case SCANF_TYPE_CHAR:
 			*(char *)dest = i;
@@ -379,8 +446,22 @@ static void store_int(void *dest, unsigned int size, unsigned long long i) {
 	}
 }
 
+void store_float(void *dest, unsigned int size, long double f) {
+	switch (size) {
+		case SCANF_TYPE_LL:
+			*(long double *)dest = f;
+			break;
+		case SCANF_TYPE_L:
+			*(double *)dest = f;
+			break;
+		default:
+			*(float *)dest = f;
+			break;
+	}
+}
+
 template<typename H>
-static int do_scanf(H &handler, const char *fmt, __builtin_va_list args) {
+int do_scanf(H &handler, const char *fmt, __builtin_va_list args) {
 	#define NOMATCH_CHECK(cond) ({ if(cond) return match_count; }) // if cond is true, matching error
 	#define EOF_CHECK(cond) ({ if(cond) return match_count ? match_count : EOF; }) // if cond is true, no more data to read
 	int match_count = 0;
@@ -787,21 +868,25 @@ static int do_scanf(H &handler, const char *fmt, __builtin_va_list args) {
 				}
 
 				for (; *fmt != ']'; fmt++) {
+					auto fmt_unsigned = reinterpret_cast<const unsigned char *>(fmt);
+
 					if (!*fmt) return EOF;
-					if (*fmt == '-' && *fmt != ']') {
+					if (*fmt == '-' && *(fmt + 1) != ']') {
 						fmt++;
-						for (char c = *(fmt - 2); c < *fmt; c++)
+						fmt_unsigned++;
+						for (unsigned char c = *(fmt_unsigned - 2); c < *fmt_unsigned; c++)
 							scanset[1 + c] = 1 - invert;
 					}
-					scanset[1 + *fmt] = 1 - invert;
+					scanset[1 + *fmt_unsigned] = 1 - invert;
 				}
 
 				char c = handler.look_ahead();
 				EOF_CHECK(c == '\0');
 				while (c && (!width || count < width)) {
-					handler.consume();
-					if (!scanset[1 + c])
+					unsigned char uc = static_cast<unsigned char>(c);
+					if (!scanset[1 + uc])
 						break;
+					handler.consume();
 
 					if(type == SCANF_TYPE_L)
 						append_to_wbuffer(c);
@@ -887,6 +972,163 @@ static int do_scanf(H &handler, const char *fmt, __builtin_va_list args) {
 
 				continue;
 			}
+			case 'a':
+			case 'A':
+			case 'e':
+			case 'E':
+			case 'f':
+			case 'F':
+			case 'g':
+			case 'G': {
+				bool is_negative = false;
+				long double divisor = 10;
+				long double result = 0;
+				int base = 10;
+				int count = 0;
+				bool dot = false; // set to true once a decimal point has been hit
+				char c = handler.look_ahead();
+				EOF_CHECK(c == '\0');
+
+				if (c == '-' || c == '+') {
+					handler.consume();
+					is_negative = c == '-';
+					c = handler.look_ahead();
+				}
+
+				// nan?
+				if (tolower(c) == 'n') {
+					handler.consume();
+					c = handler.look_ahead();
+					if (tolower(c) != 'a')
+						return match_count;
+
+					handler.consume();
+					c = handler.look_ahead();
+					if (tolower(c) != 'n')
+						return match_count;
+
+					handler.consume();
+					if (dest)
+						store_float(dest, type, NAN);
+
+					break;
+				}
+
+				// inf?
+				if (tolower(c) == 'i') {
+					handler.consume();
+					c = handler.look_ahead();
+					size_t i = 0;
+					for (; i < strlen("nfinity"); i++) {
+						if (tolower(c) != "nfinity"[i])
+							break;
+						handler.consume();
+						c = handler.look_ahead();
+					}
+
+					NOMATCH_CHECK(i != 2 && i != 7);
+
+					if (dest)
+						store_float(dest, type, is_negative ? -INFINITY : INFINITY);
+
+					break;
+				}
+
+				if (c == '0') {
+					handler.consume();
+					c = handler.look_ahead();
+
+					if (c == 'x' || c == 'X') {
+						divisor = 16;
+						base = 16;
+						handler.consume();
+						c = handler.look_ahead();
+					}
+				}
+
+				while ((base == 16 ? isxdigit(c) : isdigit(c)) || (dot == false && c == '.')) {
+					handler.consume();
+					if (c == '.') {
+						dot = true;
+						c = handler.look_ahead();
+						continue;
+					}
+
+					long double character_value;
+					if (base == 10 || (c >= '0' && c <= '9'))
+						character_value = c - '0';
+					else if (base == 16 && tolower(c) >= 'a' && tolower(c) <= 'f')
+						character_value = tolower(c) - 'a' + 10;
+					else
+						break;
+
+					if (dot) {
+						result = result + character_value / divisor;
+						divisor *= base;
+					} else {
+						result = result * base + character_value;
+					}
+
+					++count;
+					c = handler.look_ahead();
+				}
+
+				NOMATCH_CHECK(count == 0);
+
+				if (c == 'e' || c == 'E') {
+					handler.consume();
+					c = handler.look_ahead();
+
+					bool exp_negative = false;
+
+					if (c == '-' || c == '+') {
+						handler.consume();
+						exp_negative = c == '-';
+						c = handler.look_ahead();
+					}
+
+					int exp = 0;
+
+					while (isdigit(c)) {
+						handler.consume();
+						exp = exp * 10 + (c - '0');
+						c = handler.look_ahead();
+					}
+
+					if (exp_negative)
+						exp = -exp;
+
+					result *= pow(10.0, exp);
+				} else if (c == 'p' || c == 'P') {
+					handler.consume();
+					c = handler.look_ahead();
+
+					bool exp_negative = false;
+
+					if (c == '-' || c == '+') {
+						handler.consume();
+						exp_negative = c == '-';
+						c = handler.look_ahead();
+					}
+
+					int exp = 0;
+
+					while (isdigit(c)) {
+						handler.consume();
+						exp = exp * 10 + (c - '0');
+						c = handler.look_ahead();
+					}
+
+					if (exp_negative)
+						exp = -exp;
+
+					result *= pow(2.0, exp);
+				}
+
+				if (dest)
+					store_float(dest, type, is_negative ? -result : result);
+				break;
+			}
 		}
 
 		if(allocate_buf && dest) {
@@ -912,6 +1154,9 @@ static int do_scanf(H &handler, const char *fmt, __builtin_va_list args) {
 	return match_count;
 }
 
+} // namespace
+
+// byte-oriented (POSIX)
 int scanf(const char *__restrict format, ...) {
 	va_list args;
 	va_start(args, format);
@@ -946,6 +1191,7 @@ int sscanf(const char *__restrict buffer, const char *__restrict format, ...) {
 	return result;
 }
 
+// byte-oriented (POSIX)
 int vfprintf(FILE *__restrict stream, const char *__restrict format, __builtin_va_list args) {
 	frg::va_struct vs;
 	frg::arg arg_list[NL_ARGMAX + 1];
@@ -954,10 +1200,13 @@ int vfprintf(FILE *__restrict stream, const char *__restrict format, __builtin_v
 	auto file = static_cast<mlibc::abstract_file *>(stream);
 	frg::unique_lock lock(file->_lock);
 	StreamPrinter p{stream};
-//	mlibc::infoLogger() << "printf(" << format << ")" << frg::endlog;
-	auto res = frg::printf_format(PrintfAgent{&p, &vs}, format, &vs);
-	if (!res)
-		return -static_cast<int>(res.error());
+	if (mlibc::globalConfig().debugPrintf)
+		mlibc::infoLogger() << "vfprintf(\"" << format << "\")" << frg::endlog;
+	auto res = frg::printf_format<NL_ARGMAX>(PrintfAgent{&p, &vs}, format, &vs);
+	if (!res) {
+		errno = EINVAL;
+		return -1;
+	}
 
 	return p.count;
 }
@@ -992,13 +1241,13 @@ int vfscanf(FILE *__restrict stream, const char *__restrict format, __builtin_va
 	return do_scanf(handler, format, args);
 }
 
+// byte-oriented (POSIX)
 int vprintf(const char *__restrict format, __builtin_va_list args){
 	return vfprintf(stdout, format, args);
 }
 
-int vscanf(const char *__restrict, __builtin_va_list) {
-	__ensure(!"Not implemented");
-	__builtin_unreachable();
+int vscanf(const char *__restrict format, __builtin_va_list args) {
+	return vfscanf(stdin, format, args);
 }
 
 int vsnprintf(char *__restrict buffer, size_t max_size,
@@ -1008,10 +1257,14 @@ int vsnprintf(char *__restrict buffer, size_t max_size,
 	vs.arg_list = arg_list;
 	va_copy(vs.args, args);
 	LimitedPrinter p{buffer, max_size ? max_size - 1 : 0};
-//	mlibc::infoLogger() << "printf(" << format << ")" << frg::endlog;
-	auto res = frg::printf_format(PrintfAgent{&p, &vs}, format, &vs);
-	if (!res)
-		return -static_cast<int>(res.error());
+	if (mlibc::globalConfig().debugPrintf)
+		mlibc::infoLogger() << "vsnprintf(\"" << format << "\")" << frg::endlog;
+
+	auto res = frg::printf_format<NL_ARGMAX>(PrintfAgent{&p, &vs}, format, &vs);
+	if (!res) {
+		errno = EINVAL;
+		return -1;
+	}
 	if (max_size)
 		p.buffer[frg::min(max_size - 1, p.count)] = 0;
 	return p.count;
@@ -1023,10 +1276,14 @@ int vsprintf(char *__restrict buffer, const char *__restrict format, __builtin_v
 	vs.arg_list = arg_list;
 	va_copy(vs.args, args);
 	BufferPrinter p(buffer);
-//	mlibc::infoLogger() << "printf(" << format << ")" << frg::endlog;
-	auto res = frg::printf_format(PrintfAgent{&p, &vs}, format, &vs);
-	if (!res)
-		return -static_cast<int>(res.error());
+
+	if (mlibc::globalConfig().debugPrintf)
+		mlibc::infoLogger() << "vsprintf(\"" << format << "\")" << frg::endlog;
+	auto res = frg::printf_format<NL_ARGMAX>(PrintfAgent{&p, &vs}, format, &vs);
+	if (!res) {
+		errno = EINVAL;
+		return -1;
+	}
 	p.buffer[p.count] = 0;
 	return p.count;
 }
@@ -1051,21 +1308,54 @@ int vsscanf(const char *__restrict buffer, const char *__restrict format, __buil
 	return result;
 }
 
-int fwprintf(FILE *__restrict, const wchar_t *__restrict, ...) { MLIBC_STUB_BODY; }
+// wide-oriented (POSIX)
+int fwprintf(FILE *__restrict stream, const wchar_t *__restrict format, ...) {
+	va_list args;
+	va_start(args, format);
+	int result = vfwprintf(stream, format, args);
+	va_end(args);
+	return result;
+}
+
+// wide-oriented (POSIX)
 int fwscanf(FILE *__restrict, const wchar_t *__restrict, ...) { MLIBC_STUB_BODY; }
+
+// wide-oriented (POSIX)
 int vfwprintf(FILE *__restrict, const wchar_t *__restrict, __builtin_va_list) { MLIBC_STUB_BODY; }
+// wide-oriented (POSIX)
 int vfwscanf(FILE *__restrict, const wchar_t *__restrict, __builtin_va_list) { MLIBC_STUB_BODY; }
 
-int swprintf(wchar_t *__restrict, size_t, const wchar_t *__restrict, ...) { MLIBC_STUB_BODY; }
-int swscanf(wchar_t *__restrict, const wchar_t *__restrict, ...) { MLIBC_STUB_BODY; }
-int vswprintf(wchar_t *__restrict, size_t, const wchar_t *__restrict, __builtin_va_list) { MLIBC_STUB_BODY; }
-int vswscanf(wchar_t *__restrict, const wchar_t *__restrict, __builtin_va_list) { MLIBC_STUB_BODY; }
+int swprintf(wchar_t *__restrict buffer, size_t n, const wchar_t *__restrict format, ...) {
+	va_list args;
+	va_start(args, format);
+	int result = vswprintf(buffer, n, format, args);
+	va_end(args);
+	return result;
+}
 
-int wprintf(const wchar_t *__restrict, ...) { MLIBC_STUB_BODY; }
+int swscanf(const wchar_t *__restrict, const wchar_t *__restrict, ...) { MLIBC_STUB_BODY; }
+int vswprintf(wchar_t *__restrict, size_t, const wchar_t *__restrict, __builtin_va_list) { MLIBC_STUB_BODY; }
+int vswscanf(const wchar_t *__restrict, const wchar_t *__restrict, __builtin_va_list) { MLIBC_STUB_BODY; }
+
+// wide-oriented (POSIX)
+int wprintf(const wchar_t *__restrict format, ...) {
+	va_list args;
+	va_start(args, format);
+	int result = vfwprintf(stdout, format, args);
+	va_end(args);
+	return result;
+}
+
+// wide-oriented (POSIX)
 int wscanf(const wchar_t *__restrict, ...) { MLIBC_STUB_BODY; }
-int vwprintf(const wchar_t *__restrict, __builtin_va_list) { MLIBC_STUB_BODY; }
+
+int vwprintf(const wchar_t *__restrict format, __builtin_va_list args) {
+	return vfwprintf(stdout, format, args);
+}
+
 int vwscanf(const wchar_t *__restrict, __builtin_va_list) { MLIBC_STUB_BODY; }
 
+// byte-oriented (POSIX)
 int fgetc(FILE *stream) {
 	char c;
 	auto bytes_read = fread(&c, 1, 1, stream);
@@ -1074,6 +1364,7 @@ int fgetc(FILE *stream) {
 	return c;
 }
 
+// byte-oriented (POSIX)
 char *fgets(char *__restrict buffer, int max_size, FILE *__restrict stream) {
 	auto file = static_cast<mlibc::abstract_file *>(stream);
 	frg::unique_lock lock(file->_lock);
@@ -1087,12 +1378,14 @@ int fputc_unlocked(int c, FILE *stream) {
 	return 1;
 }
 
+// byte-oriented (POSIX)
 int fputc(int c, FILE *stream) {
 	auto file = static_cast<mlibc::abstract_file *>(stream);
 	frg::unique_lock lock(file->_lock);
 	return fputc_unlocked(c, stream);
 }
 
+// byte-oriented
 int fputs_unlocked(const char *__restrict string, FILE *__restrict stream) {
 	// fwrite with a length of 0 will return 0, so we need to explicitly allow
 	// zero length strings.
@@ -1102,24 +1395,29 @@ int fputs_unlocked(const char *__restrict string, FILE *__restrict stream) {
 	return 1;
 }
 
+// byte-oriented (POSIX)
 int fputs(const char *__restrict string, FILE *__restrict stream) {
 	auto file = static_cast<mlibc::abstract_file *>(stream);
 	frg::unique_lock lock(file->_lock);
 	return fputs_unlocked(string, stream);
 }
 
+// byte-oriented
 int getc_unlocked(FILE *stream) {
 	return fgetc_unlocked(stream);
 }
 
+// byte-oriented (POSIX)
 int getc(FILE *stream) {
 	return fgetc(stream);
 }
 
+// byte-oriented
 int getchar_unlocked(void) {
 	return fgetc_unlocked(stdin);
 }
 
+// byte-oriented (POSIX)
 int getchar(void) {
 	return fgetc(stdin);
 }
@@ -1128,6 +1426,7 @@ char *gets(char *s){
 	return fgets(s, INT_MAX, stdin);
 }
 
+// byte-oriented
 int putc_unlocked(int c, FILE *stream) {
 	char d = c;
 	if(fwrite_unlocked(&d, 1, 1, stream) != 1)
@@ -1135,6 +1434,7 @@ int putc_unlocked(int c, FILE *stream) {
 	return c;
 }
 
+// byte-oriented (POSIX)
 int putc(int c, FILE *stream) {
 	auto file = static_cast<mlibc::abstract_file *>(stream);
 	frg::unique_lock lock(file->_lock);
@@ -1145,12 +1445,14 @@ int putchar_unlocked(int c) {
 	return putc_unlocked(c, stdout);
 }
 
+// byte-oriented (POSIX)
 int putchar(int c) {
 	auto file = static_cast<mlibc::abstract_file *>(stdout);
 	frg::unique_lock lock(file->_lock);
 	return putchar_unlocked(c);
 }
 
+// byte-oriented (POSIX)
 int puts(const char *string) {
 	auto file = static_cast<mlibc::abstract_file *>(stdout);
 	frg::unique_lock lock(file->_lock);
@@ -1170,30 +1472,56 @@ int puts(const char *string) {
 	}
 
 	size_t unused;
-	if (!file->write("\n", 1, &unused)) {
+	if (file->write("\n", 1, &unused)) {
 		return EOF;
 	}
 
 	return 1;
 }
 
+// wide-oriented (POSIX)
 wint_t fgetwc(FILE *) { MLIBC_STUB_BODY; }
+// wide-oriented (POSIX)
 wchar_t *fgetws(wchar_t *__restrict, int, FILE *__restrict) { MLIBC_STUB_BODY; }
+
+// wide-oriented (POSIX)
 wint_t fputwc(wchar_t, FILE *) { MLIBC_STUB_BODY; }
+
+// wide-oriented (POSIX)
 int fputws(const wchar_t *__restrict, FILE *__restrict) { MLIBC_STUB_BODY; }
-int fwide(FILE *, int) { MLIBC_STUB_BODY; }
+
+int fwide(FILE *stream, int mode) {
+	auto file = static_cast<mlibc::abstract_file *>(stream);
+	frg::unique_lock lock(file->_lock);
+
+	if (mode > 0 && file->_orientation == mlibc::stream_orientation::none)
+		file->_orientation = mlibc::stream_orientation::wide;
+	else if (mode < 0 && file->_orientation == mlibc::stream_orientation::none)
+		file->_orientation = mlibc::stream_orientation::byte;
+
+	return std::to_underlying(file->_orientation);
+}
+
+// wide-oriented (POSIX)
 wint_t getwc(FILE *) { MLIBC_STUB_BODY; }
+// wide-oriented (POSIX)
 wint_t getwchar(void) { MLIBC_STUB_BODY; }
+
+// wide-oriented (POSIX)
 wint_t putwc(wchar_t, FILE *) { MLIBC_STUB_BODY; }
+// wide-oriented (POSIX)
 wint_t putwchar(wchar_t) { MLIBC_STUB_BODY; }
+// wide-oriented (POSIX)
 wint_t ungetwc(wint_t, FILE *) { MLIBC_STUB_BODY; }
 
+// byte-oriented (POSIX)
 size_t fread(void *buffer, size_t size, size_t count, FILE *file_base) {
 	auto file = static_cast<mlibc::abstract_file *>(file_base);
 	frg::unique_lock lock(file->_lock);
 	return fread_unlocked(buffer, size, count, file_base);
 }
 
+// byte-oriented (POSIX)
 size_t fwrite(const void *buffer, size_t size , size_t count, FILE *file_base) {
 	auto file = static_cast<mlibc::abstract_file *>(file_base);
 	frg::unique_lock lock(file->_lock);
@@ -1248,10 +1576,12 @@ void perror(const char *string) {
 
 // POSIX extensions.
 
+// byte-oriented (POSIX)
 ssize_t getline(char **line, size_t *n, FILE *stream) {
 	return getdelim(line, n, '\n', stream);
 }
 
+// byte-oriented (POSIX)
 ssize_t getdelim(char **line, size_t *n, int delim, FILE *stream) {
 	// Otherwise, we cannot store the buffer / size.
 	if(!line || !n) {
@@ -1323,10 +1653,13 @@ int vasprintf(char **out, const char *format, __builtin_va_list args) {
 	vs.arg_list = arg_list;
 	va_copy(vs.args, args);
 	ResizePrinter p;
-//	mlibc::infoLogger() << "printf(" << format << ")" << frg::endlog;
-	auto res = frg::printf_format(PrintfAgent{&p, &vs}, format, &vs);
-	if (!res)
-		return -static_cast<int>(res.error());
+	if (mlibc::globalConfig().debugPrintf)
+		mlibc::infoLogger() << "vasprintf(\"" << format << "\")" << frg::endlog;
+	auto res = frg::printf_format<NL_ARGMAX>(PrintfAgent{&p, &vs}, format, &vs);
+	if (!res) {
+		errno = EINVAL;
+		return -1;
+	}
 	p.expand();
 	p.buffer[p.count] = 0;
 	*out = p.buffer;
@@ -1360,6 +1693,7 @@ int ferror_unlocked(FILE *file_base) {
 	return file_base->__status_bits & __MLIBC_ERROR_BIT;
 }
 
+// byte-oriented
 int fgetc_unlocked(FILE *stream) {
 	unsigned char d;
 	if(fread_unlocked(&d, 1, 1, stream) != 1)
@@ -1367,6 +1701,7 @@ int fgetc_unlocked(FILE *stream) {
 	return (int)d;
 }
 
+// byte-oriented
 size_t fread_unlocked(void *buffer, size_t size, size_t count, FILE *file_base) {
 	auto file = static_cast<mlibc::abstract_file *>(file_base);
 	if(!size || !count)
@@ -1416,6 +1751,7 @@ size_t fread_unlocked(void *buffer, size_t size, size_t count, FILE *file_base) 
 	}
 }
 
+// byte-oriented
 size_t fwrite_unlocked(const void *buffer, size_t size, size_t count, FILE *file_base) {
 	auto file = static_cast<mlibc::abstract_file *>(file_base);
 	if(!size || !count)
@@ -1469,6 +1805,7 @@ size_t fwrite_unlocked(const void *buffer, size_t size, size_t count, FILE *file
 	}
 }
 
+// byte-oriented
 char *fgets_unlocked(char *__restrict buffer, int max_size, FILE *__restrict stream) {
 	__ensure(max_size > 0);
 	for(int i = 0; ; i++) {

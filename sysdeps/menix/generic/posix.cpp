@@ -1,9 +1,7 @@
 #include <abi-bits/limits.h>
 #include <abi-bits/pid_t.h>
-#include <asm/ioctls.h>
 #include <errno.h>
 #include <frg/logging.hpp>
-#include <menix/power.hpp>
 #include <menix/syscall.hpp>
 #include <mlibc/debug.hpp>
 #include <mlibc/posix-sysdeps.hpp>
@@ -403,7 +401,7 @@ int sys_fcntl(int fd, int request, va_list args, int *result) {
 }
 
 int sys_ttyname(int fd, char *buf, size_t size) {
-	if (size >= NAME_MAX) {
+	if (size >= __MLIBC_NAME_MAX) {
 		mlibc::panicLogger() << "ttyname size too small" << frg::endlog;
 		__builtin_unreachable();
 	}
@@ -463,6 +461,16 @@ int sys_tcsetattr(int fd, int optional_action, const struct termios *attr) {
 
 	int ret;
 	return sys_ioctl(fd, req, (void *)attr, &ret);
+}
+
+int sys_tcgetwinsize(int fd, struct winsize *winsz) {
+	int result;
+	return sys_ioctl(fd, TIOCGWINSZ, winsz, &result);
+}
+
+int sys_tcsetwinsize(int fd, const struct winsize *winsz) {
+	int result;
+	return sys_ioctl(fd, TIOCSWINSZ, const_cast<struct winsize *>(winsz), &result);
 }
 
 int sys_pipe(int *fds, int flags) { return menix_syscall(SYSCALL_PIPE, (size_t)fds, flags).error; }

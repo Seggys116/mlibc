@@ -3,19 +3,15 @@ if not linux_option
 	subdir_done()
 endif
 libc_sources += files(
+	'generic/fcntl.cpp',
 	'generic/mntent.cpp',
-	'generic/sys-epoll.cpp',
 	'generic/sys-inotify.cpp',
 	'generic/sys-mount.cpp',
 	'generic/sys-prctl.cpp',
 	'generic/sys-ptrace.cpp',
 	'generic/sys-random.cpp',
 	'generic/sys-sendfile.cpp',
-	'generic/sys-signalfd.cpp',
-	'generic/sys-timerfd.cpp',
 	'generic/sys-uio.cpp',
-	'generic/sys-eventfd.cpp',
-	'generic/sys-reboot.cpp',
 	'generic/sys-xattr.cpp',
 	'generic/utmp.cpp',
 	'generic/linux-unistd.cpp',
@@ -27,7 +23,7 @@ libc_sources += files(
 	'generic/sys-klog.cpp',
 	'generic/sched.cpp',
 	'generic/sys-quota.cpp',
-	'generic/capabilities.cpp',
+	'generic/capability.cpp',
 	'generic/cpuset.cpp',
 	'generic/sys-swap.cpp',
 	'generic/sys-statfs.cpp',
@@ -66,18 +62,13 @@ if not no_headers
 		subdir: 'scsi'
 	)
 	install_headers(
-		'include/sys/epoll.h',
 		'include/sys/inotify.h',
 		'include/sys/mount.h',
 		'include/sys/prctl.h',
 		'include/sys/ptrace.h',
 		'include/sys/random.h',
 		'include/sys/sendfile.h',
-		'include/sys/signalfd.h',
 		'include/sys/sysmacros.h',
-		'include/sys/timerfd.h',
-		'include/sys/eventfd.h',
-		'include/sys/reboot.h',
 		'include/sys/fsuid.h',
 		'include/sys/vt.h',
 		'include/sys/sysinfo.h',

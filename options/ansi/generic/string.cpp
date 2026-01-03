@@ -3,9 +3,9 @@
 #include <string.h>
 #include <errno.h>
 #include <wchar.h>
-#include <ctype.h>
 
 #include <bits/ensure.h>
+#include <mlibc/strtofp.hpp>
 #include <mlibc/strtol.hpp>
 
 // memset() is defined in options/internals.
@@ -233,9 +233,17 @@ char *strchrnul(const char *s, int c) {
 	return const_cast<char *>(s + i);
 }
 
-double wcstod(const wchar_t *__restrict, wchar_t **__restrict) { MLIBC_STUB_BODY; }
-float wcstof(const wchar_t *__restrict, wchar_t **__restrict) { MLIBC_STUB_BODY; }
-long double wcstold(const wchar_t *__restrict, wchar_t **__restrict) { MLIBC_STUB_BODY; }
+double wcstod(const wchar_t *__restrict string, wchar_t **__restrict end) {
+	return mlibc::strtofp<double, wchar_t>(string, end, mlibc::getActiveLocale());
+}
+
+float wcstof(const wchar_t *__restrict string, wchar_t **__restrict end) {
+	return mlibc::strtofp<float, wchar_t>(string, end, mlibc::getActiveLocale());
+}
+
+long double wcstold(const wchar_t *__restrict string, wchar_t **__restrict end) {
+	return mlibc::strtofp<long double, wchar_t>(string, end, mlibc::getActiveLocale());
+}
 
 long wcstol(const wchar_t *__restrict nptr, wchar_t **__restrict endptr, int base)  {
 	return mlibc::stringToInteger<long, wchar_t>(nptr, endptr, base);
@@ -279,16 +287,45 @@ wchar_t *wcscat(wchar_t *__restrict dest, const wchar_t *__restrict src) {
 	return dest;
 }
 
-wchar_t *wcsncat(wchar_t *__restrict, const wchar_t *__restrict, size_t) { MLIBC_STUB_BODY; }
+wchar_t *wcsncat(wchar_t *__restrict dest, const wchar_t *__restrict src, size_t max_size) {
+	auto dest_bytes = static_cast<wchar_t *>(dest);
+	auto src_bytes = static_cast<const wchar_t *>(src);
+	dest_bytes += wcslen(dest);
+	size_t i = 0;
+	while(*src_bytes && i < max_size) {
+		*(dest_bytes++) = *(src_bytes++);
+		i++;
+	}
+	*dest_bytes = 0;
+	return dest;
+}
 
 int wcscmp(const wchar_t *l, const wchar_t *r) {
 	for(; *l == *r && *l && *r; l++, r++);
 	return *l - *r;
 }
 
-int wcscoll(const wchar_t *, const wchar_t *) { MLIBC_STUB_BODY; }
-int wcsncmp(const wchar_t *, const wchar_t *, size_t) { MLIBC_STUB_BODY; }
-int wcsxfrm(wchar_t *__restrict, const wchar_t *__restrict, size_t) { MLIBC_STUB_BODY; }
+int wcscoll(const wchar_t *l, const wchar_t *r) {
+	// TODO: fix once we implement collation
+	return wcscmp(l, r);
+}
+
+int wcsncmp(const wchar_t *l, const wchar_t *r, size_t n) {
+	for(; n && *l == *r && *l && *r; n--, l++, r++);
+	return n ? (*l < *r ? -1 : *l > *r) : 0;
+}
+
+size_t wcsxfrm(wchar_t *__restrict dest, const wchar_t *__restrict src, size_t n) {
+	// TODO: fix once we implement collation
+	// NOTE: This might not work for non ANSI charsets.
+	size_t l = wcslen(src);
+
+	// man page: If the value returned is n or more, the contents of dest are indeterminate.
+	if(n > l)
+		wcsncpy(dest, src, n);
+
+	return l;
+}
 
 int wmemcmp(const wchar_t *a, const wchar_t *b, size_t size) {
 	for(size_t i = 0; i < size; i++) {
@@ -309,8 +346,29 @@ wchar_t *wcschr(const wchar_t *s, wchar_t c) {
 	return *s ? (wchar_t *)s : nullptr;
 }
 
-size_t wcscspn(const wchar_t *, const wchar_t *) { MLIBC_STUB_BODY; }
-wchar_t *wcspbrk(const wchar_t *, const wchar_t *) { MLIBC_STUB_BODY; }
+size_t wcscspn(const wchar_t *ws, const wchar_t *reject) {
+	if (reject[0] == L'\0')
+		return wcslen(ws);
+
+	if (reject[1] == L'\0') {
+		auto match = wcschr(ws, reject[0]);
+		return match ? match - ws : wcslen(ws);
+	}
+
+	const wchar_t *i = ws;
+	for (; *i && !wcschr(reject, *i); i++);
+	return i - ws;
+}
+
+wchar_t *wcspbrk(const wchar_t *ws, const wchar_t *accept) {
+	size_t n = 0;
+	while (ws[n]) {
+		if (wcschr(accept, ws[n]))
+			return const_cast<wchar_t *>(ws + n);
+		n++;
+	}
+	return nullptr;
+}
 
 wchar_t *wcsrchr(const wchar_t *s, wchar_t c) {
 	const wchar_t *p;
@@ -318,9 +376,51 @@ wchar_t *wcsrchr(const wchar_t *s, wchar_t c) {
 	return p >= s ? (wchar_t *)p : nullptr;
 }
 
-size_t wcsspn(const wchar_t *, const wchar_t *) { MLIBC_STUB_BODY; }
-wchar_t *wcsstr(const wchar_t *, const wchar_t *) { MLIBC_STUB_BODY; }
-wchar_t *wcstok(wchar_t *__restrict, const wchar_t *__restrict, wchar_t **__restrict) { MLIBC_STUB_BODY; }
+size_t wcsspn(const wchar_t *ws, const wchar_t *accept) {
+	size_t n = 0;
+	while(true) {
+		if(!ws[n] || !wcschr(accept, ws[n]))
+			return n;
+		n++;
+	}
+}
+
+wchar_t *wcsstr(const wchar_t *haystack, const wchar_t *needle) {
+	for(size_t i = 0; haystack[i]; i++) {
+		bool found = true;
+		for(size_t j = 0; needle[j]; j++) {
+			if(!needle[j] || haystack[i + j] == needle[j])
+				continue;
+
+			found = false;
+			break;
+		}
+
+		if(found)
+			return const_cast<wchar_t *>(&haystack[i]);
+	}
+
+	return nullptr;
+}
+
+wchar_t *wcstok(wchar_t *__restrict ws, const wchar_t *__restrict delim, wchar_t **__restrict ptr) {
+	if (!ws && !(ws = *ptr))
+		return NULL;
+
+	ws += wcsspn(ws, delim);
+
+	if (!*ws)
+		return *ptr = nullptr;
+
+	*ptr = ws + wcscspn(ws, delim);
+
+	if (**ptr)
+		*(*ptr)++ = 0;
+	else
+		*ptr = nullptr;
+
+	return ws;
+}
 
 wchar_t *wmemchr(const wchar_t *s, wchar_t c, size_t size) {
 	auto s_bytes = s;
@@ -484,67 +584,4 @@ int strerror_r(int e, char *buffer, size_t bufsz) {
 	if(strlen(s) >= bufsz)
 		return ERANGE;
 	return 0;
-}
-
-void *mempcpy(void *dest, const void *src, size_t len) {
-	return (char *)memcpy(dest, src, len) + len;
-}
-
-// GNU extensions.
-// Taken from musl.
-int strverscmp(const char *l0, const char *r0) {
-	const unsigned char *l = (const unsigned char *)l0;
-	const unsigned char *r = (const unsigned char *)r0;
-	size_t i, dp, j;
-	int z = 1;
-
-	/* Find maximal matching prefix and track its maximal digit
-	 * suffix and whether those digits are all zeros. */
-	for(dp = i = 0; l[i] == r[i]; i++) {
-		int c = l[i];
-		if(!c)
-			return 0;
-		if(!isdigit(c))
-			dp = i + 1, z = 1;
-		else if(c != '0')
-			z = 0;
-	}
-
-	if(l[dp] != '0' && r[dp] != '0') {
-		/* If we're not looking at a digit sequence that began
-		 * with a zero, longest digit string is greater. */
-		for(j = i; isdigit(l[j]); j++) {
-			if(!isdigit(r[j]))
-				return 1;
-		}
-		if(isdigit(r[j]))
-			return -1;
-	} else if(z && dp < i && (isdigit(l[i]) || isdigit(r[i]))) {
-		/* Otherwise, if common prefix of digit sequence is
-		 * all zeros, digits order less than non-digits. */
-		return (unsigned char)(l[i] - '0') - (unsigned char)(r[i] - '0');
-	}
-
-	return l[i] - r[i];
-}
-
-void *memmem(const void *hs, size_t haystackLen, const void *nd, size_t needleLen) {
-	const char *haystack = static_cast<const char *>(hs);
-	const char *needle = static_cast<const char *>(nd);
-
-	for (size_t i = 0; i < haystackLen; i++) {
-		bool found = true;
-
-		for (size_t j = 0; j < needleLen; j++) {
-			if (i + j >= haystackLen || haystack[i + j] != needle[j]) {
-				found = false;
-				break;
-			}
-		}
-
-		if(found)
-			return const_cast<char *>(&haystack[i]);
-	}
-
-	return nullptr;
 }

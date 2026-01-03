@@ -81,9 +81,8 @@ int sys_clock_get(int clock, time_t *secs, long *nanos) {
 
 int sys_clock_getres(int clock, time_t *secs, long *nanos) {
 	(void)clock;
-	(void)secs;
-	(void)nanos;
-	mlibc::infoLogger() << "mlibc: clock_getres is a stub" << frg::endlog;
+	*secs = 0;
+	*nanos = 1;
 	return 0;
 }
 
@@ -235,24 +234,27 @@ int sys_timer_create(clockid_t clk, struct sigevent *__restrict evp, timer_t *__
 		};
 		// but also mask SIGTIMER
 		sigaddset(&mask, SIGTIMER);
-		HelWord original_set;
+		HelWord err, original_set;
 		uint64_t unused;
 
-		HEL_CHECK(helSyscall2_2(
+		HEL_CHECK(helSyscall2_3(
 		    kHelObserveSuperCall + posix::superSigMask,
 		    SIG_BLOCK,
 		    *reinterpret_cast<const HelWord *>(&mask),
+		    &err,
 		    &original_set,
 		    &unused
 		));
+		__ensure(err == 0);
 
 		pthread_t pthread;
 		ret = pthread_create(&pthread, &attr, timer_setup, &context);
 
 		// restore previous signal mask
-		HEL_CHECK(helSyscall2_2(
-		    kHelObserveSuperCall + posix::superSigMask, SIG_SETMASK, original_set, &unused, &unused
+		HEL_CHECK(helSyscall2_3(
+		    kHelObserveSuperCall + posix::superSigMask, SIG_SETMASK, original_set, &err, &unused, &unused
 		));
+		__ensure(err == 0);
 
 		if (ret)
 			return ret;
