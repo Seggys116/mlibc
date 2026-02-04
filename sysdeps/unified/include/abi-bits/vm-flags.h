@@ -15,6 +15,7 @@
 #define MAP_ANONYMOUS 0x08
 #define MAP_NORESERVE 0x10
 #define MAP_FIXED_NOREPLACE 0x20
+#define MAP_POPULATE  0x8000
 
 #define MS_ASYNC 0x01
 #define MS_SYNC 0x02

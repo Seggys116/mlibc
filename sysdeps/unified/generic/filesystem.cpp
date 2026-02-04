@@ -508,6 +508,15 @@ void sys_sync()
     syscall(SYS_SYNC);
 }
 
+int sys_fallocate(int fd, off_t offset, size_t size)
+{
+    long ret = syscall(SYS_FALLOCATE, fd, offset, size);
+    if (ret < 0) {
+        return -ret;
+    }
+    return 0;
+}
+
 #endif
 
 }

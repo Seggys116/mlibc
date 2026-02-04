@@ -164,6 +164,7 @@
 #define SYS_SETREUID            161
 #define SYS_SETREGID            162
 #define SYS_UMASK               163
+#define SYS_FALLOCATE           164
 
 #ifdef __cplusplus
 extern "C"{

@@ -17,8 +17,9 @@ libc_sources += files(
 	'generic/pty.cpp',
 	'generic/signals.cpp',
 	'generic/sockets.cpp',
-	'generic/thread_entry.S',
-	'generic/thread.cpp'
+	'generic/thread.cpp',
+	'x86_64/thread_entry.S',
+	'x86_64/thread.cpp'
 )
 
 if not no_headers

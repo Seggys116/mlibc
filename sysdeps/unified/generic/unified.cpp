@@ -27,6 +27,8 @@ int sys_futex_wake(int *pointer) {
 }
 
 int sys_tcb_set(void* pointer){
+	// Set %fs base to point to the TCB itself (within mapped stack region)
+	// This allows accessing TCB fields at positive offsets from %fs
 	syscall(SYS_SET_FS_BASE, (uintptr_t)pointer);
 	return 0;
 }
@@ -187,6 +189,7 @@ void sys_yield(){
 #define CLONE_CHILD_SETTID  0x01000000
 
 int sys_clone(void *tcb, pid_t *tid_out, void *stack){
+	//mlibc::infoLogger() << "mlibc: sys_clone entry tcb=" << (void*)tcb << " stack=" << (void*)stack << frg::endlog;
 	// Use full clone() syscall with Linux-compatible flags for pthreads
 	// Standard pthread clone flags: CLONE_VM | CLONE_FS | CLONE_FILES |
 	//                               CLONE_SIGHAND | CLONE_THREAD | CLONE_SETTLS |
@@ -195,9 +198,12 @@ int sys_clone(void *tcb, pid_t *tid_out, void *stack){
 	                 CLONE_THREAD | CLONE_SETTLS | CLONE_PARENT_SETTID |
 	                 CLONE_CHILD_SETTID;
 
-	// clone(flags, stack, parent_tid, child_tid, tls)
-	pid_t tid = syscall(SYS_CLONE, flags, (uint64_t)stack,
-	                    (uint64_t)tid_out, (uint64_t)tid_out, (uint64_t)tcb);
+	//mlibc::infoLogger() << "mlibc: sys_clone syscall entry=" << (void*)__mlibc_start_thread << " stack=" << (void*)stack << " flags=0x" << flags << frg::endlog;
+
+	// clone(entry, stack, flags, parent_tid, child_tid, tls)
+	// entry is __mlibc_start_thread which pops actual entry/user_arg/tcb from stack
+	pid_t tid = syscall(SYS_CLONE, (uint64_t)__mlibc_start_thread, (uint64_t)stack,
+	                    flags, (uint64_t)tid_out, (uint64_t)tid_out, (uint64_t)tcb);
 
 	if(tid < 0){
 		return -tid;  // Return positive errno
