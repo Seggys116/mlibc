@@ -115,6 +115,8 @@ if not no_headers
 	)
 	install_headers(
 		'include/arpa/inet.h',
+		'include/arpa/nameser.h',
+		'include/arpa/telnet.h',
 		subdir: 'arpa'
 	)
 	install_headers(

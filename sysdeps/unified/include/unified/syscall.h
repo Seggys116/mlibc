@@ -165,6 +165,15 @@
 #define SYS_SETREGID            162
 #define SYS_UMASK               163
 #define SYS_FALLOCATE           164
+#define SYS_FLOCK               165
+#define SYS_GETPRIORITY         166
+#define SYS_SETPRIORITY         167
+#define SYS_GETCPU              168
+#define SYS_MEMBARRIER          169
+#define SYS_GET_MEMPOLICY       170
+#define SYS_MEMFD_CREATE        171
+#define SYS_GETTIDID            172
+#define SYS_SETTIDID            173
 
 #ifdef __cplusplus
 extern "C"{

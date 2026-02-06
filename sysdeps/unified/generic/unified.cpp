@@ -19,11 +19,17 @@ int sys_futex_tid(){
 }
 
 int sys_futex_wait(int *pointer, int expected, const struct timespec *time){
-	return syscall(SYS_FUTEX_WAIT, pointer, expected);
+	long ret = syscall(SYS_FUTEX_WAIT, pointer, expected);
+	if (ret < 0)
+		return -ret;
+	return 0;
 }
 
 int sys_futex_wake(int *pointer) {
-	return syscall(SYS_FUTEX_WAKE, pointer);
+	long ret = syscall(SYS_FUTEX_WAKE, pointer);
+	if (ret < 0)
+		return -ret;
+	return 0;
 }
 
 int sys_tcb_set(void* pointer){
@@ -38,9 +44,10 @@ int sys_vm_map(void *hint, size_t size, int prot, int flags, int fd, off_t offse
 }
 
 int sys_vm_unmap(void* address, size_t size) {
-	__ensure(!(size & 0xFFF));
+	/* Round up size to page boundary - Linux munmap accepts any size */
+	size_t aligned_size = (size + 0xFFF) & ~static_cast<size_t>(0xFFF);
 
-	long ret = syscall(SYS_MUNMAP, (uintptr_t)address, (size + 0xFFF) & ~static_cast<size_t>(0xFFF));
+	long ret = syscall(SYS_MUNMAP, (uintptr_t)address, aligned_size);
 
 	return ret;
 }
@@ -380,6 +387,38 @@ int sys_sched_getaffinity(pid_t pid, size_t cpusetsize, cpu_set_t *mask) {
 	return 0;
 }
 
+int sys_getaffinity(pid_t pid, size_t cpusetsize, cpu_set_t *mask) {
+	long ret = syscall(SYS_SCHED_GETAFFINITY, pid, cpusetsize, mask);
+	if (ret < 0) {
+		return -ret;
+	}
+	return 0;
+}
+
+int sys_setaffinity(pid_t pid, size_t cpusetsize, const cpu_set_t *mask) {
+	long ret = syscall(SYS_SCHED_SETAFFINITY, pid, cpusetsize, mask);
+	if (ret < 0) {
+		return -ret;
+	}
+	return 0;
+}
+
+int sys_getthreadaffinity(pid_t tid, size_t cpusetsize, cpu_set_t *mask) {
+	long ret = syscall(SYS_SCHED_GETAFFINITY, tid, cpusetsize, mask);
+	if (ret < 0) {
+		return -ret;
+	}
+	return 0;
+}
+
+int sys_setthreadaffinity(pid_t tid, size_t cpusetsize, const cpu_set_t *mask) {
+	long ret = syscall(SYS_SCHED_SETAFFINITY, tid, cpusetsize, mask);
+	if (ret < 0) {
+		return -ret;
+	}
+	return 0;
+}
+
 int sys_getresuid(uid_t *ruid, uid_t *euid, uid_t *suid) {
 	long ret = syscall(SYS_GETRESUID, ruid, euid, suid);
 	if (ret < 0) {
@@ -447,6 +486,56 @@ int sys_setregid(gid_t rgid, gid_t egid) {
 mode_t sys_umask(mode_t cmask) {
 	long ret = syscall(SYS_UMASK, cmask);
 	return ret;
+}
+
+int sys_getcpu(int *cpu) {
+	long result = syscall(SYS_GETCPU, cpu, nullptr);
+	if (result < 0) {
+		return -result;
+	}
+	return 0;
+}
+
+int sys_membarrier(int cmd, unsigned int flags, int cpu_id) {
+	long result = syscall(SYS_MEMBARRIER, cmd, flags, cpu_id);
+	if (result < 0) {
+		return -result;
+	}
+	return result;
+}
+
+int sys_get_mempolicy(int *mode, unsigned long *nodemask, unsigned long maxnode,
+					  void *addr, unsigned long flags) {
+	long result = syscall(SYS_GET_MEMPOLICY, mode, nodemask, maxnode, addr, flags);
+	if (result < 0) {
+		return -result;
+	}
+	return 0;
+}
+
+int sys_memfd_create(const char *name, int flags, int *fd) {
+	long result = syscall(SYS_MEMFD_CREATE, name, flags);
+	if (result < 0) {
+		return -result;
+	}
+	*fd = result;
+	return 0;
+}
+
+int sys_thread_setname(void *tcb, const char *name) {
+	long ret = syscall(SYS_SETTIDID, name);
+	if (ret < 0) {
+		return -ret;
+	}
+	return 0;
+}
+
+int sys_thread_getname(void *tcb, char *name, size_t size) {
+	long ret = syscall(SYS_GETTIDID, name, size);
+	if (ret < 0) {
+		return -ret;
+	}
+	return 0;
 }
 #endif
 

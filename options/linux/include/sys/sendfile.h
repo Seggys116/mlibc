@@ -12,6 +12,9 @@ extern "C" {
 
 ssize_t sendfile(int __out_fd, int __in_fd, off_t *__offset, size_t __size);
 
+// sendfile64 is the same as sendfile on 64-bit systems
+#define sendfile64 sendfile
+
 #endif /* !__MLIBC_ABI_ONLY */
 
 #ifdef __cplusplus

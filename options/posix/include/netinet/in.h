@@ -110,6 +110,10 @@ uint16_t ntohs(uint16_t __x);
 #if defined(_DEFAULT_SOURCE)
 #define MCAST_EXCLUDE 0
 #define MCAST_INCLUDE 1
+#define MCAST_BLOCK_SOURCE 43
+#define MCAST_UNBLOCK_SOURCE 44
+#define MCAST_JOIN_SOURCE_GROUP 46
+#define MCAST_LEAVE_SOURCE_GROUP 47
 #endif /* defined(_DEFAULT_SOURCE) */
 
 #ifdef __cplusplus

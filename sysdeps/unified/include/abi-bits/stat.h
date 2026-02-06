@@ -62,6 +62,12 @@ struct stat {
 	blkcnt_t st_blocks;
 };
 
+// On Unified-OS, stat is already 64-bit, so stat64 is just an alias
+// Don't define this when building mlibc itself to avoid conflicts with gnu::alias
+#ifndef __MLIBC_BUILDING_MLIBC
+#define stat64 stat
+#endif
+
 #ifdef __cplusplus
 }
 #endif

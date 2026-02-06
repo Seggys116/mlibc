@@ -60,9 +60,11 @@ int sys_tcsetattr(int fd, int optional_action, const struct termios *attr) {
 }
 
 int sys_ptsname(int fd, char *buffer, size_t length) {
-	int index;
-	if(int e = sys_ioctl(fd, TIOCGPTN, &index, NULL); e)
+	int index = 0;
+	int result = 0;
+	if(int e = sys_ioctl(fd, TIOCGPTN, nullptr, &result); e)
 		return e;
+	index = result;
 	if((size_t)snprintf(buffer, length, "/dev/pts/%d", index) >= length) {
 		return ERANGE;
 	}

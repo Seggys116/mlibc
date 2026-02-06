@@ -115,6 +115,20 @@ unsigned int if_nametoindex(const char *__name);
 #define IFF_LOWER_UP 0x10000
 #define IFF_DORMANT 0x20000
 #define IFF_ECHO 0x40000
+
+/* Network interface ioctl operations */
+#define SIOCADDRT       0x890B
+#define SIOCDELRT       0x890C
+#define SIOCGIFMETRIC   0x891d
+#define SIOCSIFMETRIC   0x891e
+#define SIOCSIFDSTADDR  0x8918
+#define SIOCSIFNETMASK  0x891c
+#define SIOCSIFBRDADDR  0x891a
+#define SIOCSIFHWADDR   0x8924
+#define SIOCSIFADDR     0x8916
+#define SIOCSIFMAP      0x8971
+#define SIOCGIFMAP      0x8970
+#define SIOCGIFDSTADDR  0x8917
 #endif /* defined(_DEFAULT_SOURCE) */
 
 #if __MLIBC_LINUX_OPTION

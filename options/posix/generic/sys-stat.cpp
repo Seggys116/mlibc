@@ -134,6 +134,10 @@ int stat(const char *path, struct stat *result) {
 	return 0;
 }
 
+#if __MLIBC_LINUX_OPTION
+[[gnu::alias("stat")]] int stat64(const char *path, struct stat64 *result);
+#endif /* !__MLIBC_LINUX_OPTION */
+
 int lstat(const char *path, struct stat *result) {
 	MLIBC_CHECK_OR_ENOSYS(mlibc::sys_stat, -1);
 	if(int e = mlibc::sys_stat(mlibc::fsfd_target::path,

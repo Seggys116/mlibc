@@ -5,6 +5,7 @@
 #include <errno.h>
 
 #include <mlibc/all-sysdeps.hpp>
+#include <mlibc/debug.hpp>
 
 namespace {
 
@@ -31,7 +32,6 @@ int sys_socket(int domain, int type, int protocol, int *fd){
     }
 
     *fd = ret;
-
     return 0;
 }
 

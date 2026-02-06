@@ -57,6 +57,9 @@ int openat(int __dirfd, const char *__path, int __flags, ...);
 int posix_fadvise(int __fd, off_t __offset, off_t __size, int __advice);
 int posix_fallocate(int __fd, off_t __offset, off_t __size);
 
+// posix_fadvise64 is the same as posix_fadvise on 64-bit systems
+#define posix_fadvise64 posix_fadvise
+
 #endif /* !__MLIBC_ABI_ONLY */
 
 /* This is a linux extension */

@@ -91,6 +91,10 @@ if not no_headers
 		'include/unified/syscall.h',
 		subdir: 'unified'
 	)
+	install_headers(
+		'include/sys/syscall.h',
+		subdir: 'sys'
+	)
 endif
 
 if not headers_only

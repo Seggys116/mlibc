@@ -26,6 +26,7 @@ struct rtentry {
 	unsigned long int rt_mtu;
 	unsigned long int rt_window;
 	unsigned short int rt_irtt;
+	unsigned long int rt_mss;
 };
 
 #endif /* _ABIBITS_ROUTE_H */

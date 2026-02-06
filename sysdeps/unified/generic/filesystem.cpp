@@ -517,6 +517,24 @@ int sys_fallocate(int fd, off_t offset, size_t size)
     return 0;
 }
 
+int sys_flock(int fd, int options)
+{
+    long ret = syscall(SYS_FLOCK, fd, options);
+    if (ret < 0) {
+        return -ret;
+    }
+    return 0;
+}
+
+int sys_ftruncate(int fd, size_t size)
+{
+    long ret = syscall(SYS_FTRUNCATE, fd, size);
+    if (ret < 0) {
+        return -ret;
+    }
+    return 0;
+}
+
 #endif
 
 }
