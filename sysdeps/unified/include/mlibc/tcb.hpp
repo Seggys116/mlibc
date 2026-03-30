@@ -99,6 +99,7 @@ struct Tcb {
 	int cancelBits;
 	int startGate;
 	int startupError;
+	int futexTidCache;
 
 	union {
 		void *voidPtr;

@@ -507,6 +507,7 @@ void ObjectRepository::_fetchFromPhdrs(SharedObject *object, void *phdr_pointer,
 
 	frg::optional<ptrdiff_t> dynamic_offset;
 	frg::optional<ptrdiff_t> tls_offset;
+	frg::optional<ptrdiff_t> interp_offset;
 
 	// segments are already mapped, so we just have to find the dynamic section
 	for(size_t i = 0; i < phdr_count; i++) {
@@ -523,18 +524,15 @@ void ObjectRepository::_fetchFromPhdrs(SharedObject *object, void *phdr_pointer,
 		case PT_DYNAMIC:
 			dynamic_offset = phdr->p_vaddr;
 			break;
-		case PT_TLS: {
+		case PT_TLS:
 			object->tlsSegmentSize = phdr->p_memsz;
 			object->tlsAlignment = phdr->p_align;
 			object->tlsImageSize = phdr->p_filesz;
 			tls_offset = phdr->p_vaddr;
 			break;
 		case PT_INTERP:
-			object->interpreterPath = frg::string<MemoryAllocator>{
-				(char*)(object->baseAddress + phdr->p_vaddr),
-					getAllocator()
-			};
-		} break;
+			interp_offset = phdr->p_vaddr;
+			break;
 		default:
 			//FIXME warn about unknown phdrs
 			break;
@@ -545,6 +543,11 @@ void ObjectRepository::_fetchFromPhdrs(SharedObject *object, void *phdr_pointer,
 		object->dynamic = (elf_dyn *)(object->baseAddress + *dynamic_offset);
 	if(tls_offset)
 		object->tlsImagePtr = (void *)(object->baseAddress + *tls_offset);
+	if(interp_offset)
+		object->interpreterPath = frg::string<MemoryAllocator>{
+			reinterpret_cast<const char *>(object->baseAddress + *interp_offset),
+			getAllocator()
+		};
 }
 
 
@@ -1252,8 +1255,10 @@ frg::tuple<ObjectSymbol, SymbolVersion> SharedObject::getSymbolByIndex(size_t in
 void processLateRelocation(Relocation rel) {
 	// resolve the symbol if there is a symbol
 	frg::optional<ObjectSymbol> p;
+	const elf_sym *target_sym = nullptr;
 	if(rel.symbol_index()) {
 		auto [sym, ver] = rel.object()->getSymbolByIndex(rel.symbol_index());
+		target_sym = sym.symbol();
 
 		p = Scope::resolveGlobalOrLocal(*globalScope, rel.object()->localScope,
 				sym.getString(), rel.object()->objectRts, Scope::resolveCopy, ver);
@@ -1262,7 +1267,8 @@ void processLateRelocation(Relocation rel) {
 	switch(rel.type()) {
 	case R_COPY:
 		__ensure(p);
-		memcpy(rel.destination(), (void *)p->virtualAddress(), p->symbol()->st_size);
+		__ensure(target_sym);
+		memcpy(rel.destination(), (void *)p->virtualAddress(), target_sym->st_size);
 		break;
 
 	case R_IRELATIVE:
@@ -1340,7 +1346,8 @@ void doInitialize(SharedObject *object) {
 		mlibc::infoLogger() << "rtld: Running DT_INIT_ARRAY functions" << frg::endlog;
 	__ensure((object->initArraySize % sizeof(InitFuncPtr)) == 0);
 	for(size_t i = 0; i < object->initArraySize / sizeof(InitFuncPtr); i++)
-		object->initArray[i]();
+		if(object->initArray[i])
+			object->initArray[i]();
 
 	if(rtldConfig.debugVerbose)
 		mlibc::infoLogger() << "rtld: Object initialization complete" << frg::endlog;
@@ -1358,7 +1365,8 @@ void doDestruct(SharedObject *object) {
 		mlibc::infoLogger() << "rtld: Running DT_FINI_ARRAY functions" << frg::endlog;
 	__ensure((object->finiArraySize % sizeof(InitFuncPtr)) == 0);
 	for(size_t i = object->finiArraySize / sizeof(InitFuncPtr); i > 0; i--)
-		object->finiArray[i - 1]();
+		if(object->finiArray[i - 1])
+			object->finiArray[i - 1]();
 
 	if(rtldConfig.debugVerbose)
 		mlibc::infoLogger() << "rtld: Running DT_FINI function" << frg::endlog;
@@ -1978,7 +1986,8 @@ void Loader::initObjects(ObjectRepository *repository) {
 		__ensure(!_mainExecutable->wasInitialized);
 		__ensure((_mainExecutable->preInitArraySize % sizeof(InitFuncPtr)) == 0);
 		for(size_t i = 0; i < _mainExecutable->preInitArraySize / sizeof(InitFuncPtr); i++)
-			_mainExecutable->preInitArray[i]();
+			if(_mainExecutable->preInitArray[i])
+				_mainExecutable->preInitArray[i]();
 	}
 
 	// Convert the breadth-first representation to a depth-first post-order representation,

@@ -10,9 +10,11 @@
 #include <sys/resource.h>
 #include <sys/utsname.h>
 #include <sys/sysinfo.h>
+#include <sys/prctl.h>
 #include <time.h>
 #include <signal.h>
 #include <sched.h>
+#include <sys/wait.h>
 #include <unistd.h>
 #include <sys/mman.h>
 #include <string.h>
@@ -60,12 +62,25 @@ int sys_futex_wake(int *pointer, int count) {
 }
 
 int sys_tcb_set(void* pointer){
+	// x86_64 local-exec TLS sequences first load the canonical self-pointer
+	// from %fs:0 and then apply the negative TLS offset. Re-establish that
+	// slot every time we install a TCB so compiler-generated TLS accesses
+	// cannot observe stale pre-switch contents.
+#if defined(__x86_64__)
+	auto tcb = reinterpret_cast<Tcb *>(pointer);
+	tcb->selfPointer = tcb;
+#endif
+
 	// Set %fs base to point to the TCB itself (within mapped stack region)
 	// This allows accessing TCB fields at positive offsets from %fs
 	long ret = syscall(SYS_SET_FS_BASE, (uintptr_t)pointer);
 	if (ret < 0) {
 		return -ret;
 	}
+
+#if defined(__x86_64__)
+	asm volatile ("movq %0, %%fs:0" :: "r"(pointer) : "memory");
+#endif
 	return 0;
 }
 
@@ -158,8 +173,8 @@ void sys_libc_panic(){
 	// 1) Raise SIGABRT.
 	// 2) If a handler returns or SIGABRT was ignored, reset to default and raise again.
 	// 3) If still alive, fall back to _Exit(127).
-	pid_t pid = 0;
-	if (syscall(SYS_GETPID, (uintptr_t)&pid) >= 0 && pid > 0) {
+	pid_t pid = syscall(SYS_GETPID);
+	if (pid > 0) {
 		(void)syscall(SYS_KILL, pid, SIGABRT);
 
 		struct sigaction sa = {};
@@ -170,7 +185,7 @@ void sys_libc_panic(){
 		(void)syscall(SYS_KILL, pid, SIGABRT);
 	}
 
-	syscall(SYS_EXIT, 127);
+	syscall(SYS_EXIT_GROUP, 127);
 	__builtin_trap();
 	for(;;);
 }
@@ -198,7 +213,7 @@ int sys_gethostname(char *buffer, size_t bufsize) {
 #ifndef MLIBC_BUILDING_RTLD
 
 void sys_exit(int status){
-	syscall(SYS_EXIT, status);
+	syscall(SYS_EXIT_GROUP, status);
 
 	__builtin_unreachable();
 }
@@ -426,23 +441,46 @@ void sys_thread_exit(){
 }
 
 int sys_waitpid(pid_t pid, int *status, int flags, struct rusage *ru, pid_t *ret_pid){
-	pid_t ret = syscall(SYS_WAIT_PID, pid, status, flags);
+	pid_t ret = ru
+		? syscall(SYS_WAIT4, pid, status, flags, ru)
+		: syscall(SYS_WAIT_PID, pid, status, flags);
 
 	if(ret < 0){
 		return -ret;
 	}
 
-	if(ru){
-		// Unified kernel does not yet expose per-child wait4 rusage; provide
-		// aggregate child usage if available and otherwise return zeroed stats.
-		long ru_ret = syscall(SYS_GETRUSAGE, RUSAGE_CHILDREN, ru);
-		if(ru_ret < 0){
-			memset(ru, 0, sizeof(struct rusage));
-		}
-	}
-
 	*ret_pid = ret;
 
+	return 0;
+}
+
+int sys_waitid(idtype_t idtype, id_t id, siginfo_t *info, int options) {
+	long ret = syscall(SYS_WAITID, idtype, id, info, options);
+	if(ret < 0)
+		return -ret;
+	return 0;
+}
+
+int sys_pidfd_open(pid_t pid, unsigned int flags, int *outfd) {
+	long ret = syscall(SYS_PIDFD_OPEN, pid, flags);
+	if(ret < 0)
+		return -ret;
+	*outfd = static_cast<int>(ret);
+	return 0;
+}
+
+int sys_pidfd_getpid(int fd, pid_t *outpid) {
+	long ret = syscall(SYS_PIDFD_GETPID, fd);
+	if(ret < 0)
+		return -ret;
+	*outpid = static_cast<pid_t>(ret);
+	return 0;
+}
+
+int sys_pidfd_send_signal(int pidfd, int sig, siginfo_t *info, unsigned int flags) {
+	long ret = syscall(SYS_PIDFD_SEND_SIGNAL, pidfd, sig, info, flags);
+	if(ret < 0)
+		return -ret;
 	return 0;
 }
 
@@ -501,19 +539,38 @@ int sys_getrusage(int scope, struct rusage *usage) {
 	return 0;
 }
 
-int sys_prctl(int option, va_list va, int *out) {
-	// Extract up to 4 additional arguments from va_list
-	unsigned long arg2 = va_arg(va, unsigned long);
-	unsigned long arg3 = va_arg(va, unsigned long);
-	unsigned long arg4 = va_arg(va, unsigned long);
-	unsigned long arg5 = va_arg(va, unsigned long);
-
+int sys_prctl_args(int option, unsigned long arg2, unsigned long arg3,
+		unsigned long arg4, unsigned long arg5, int *out) {
 	long ret = syscall(SYS_PRCTL, option, arg2, arg3, arg4, arg5);
 	if (ret < 0) {
 		return -ret;
 	}
 	*out = ret;
 	return 0;
+}
+
+int sys_prctl(int option, va_list va, int *out) {
+	unsigned long arg2 = 0;
+	unsigned long arg3 = 0;
+	unsigned long arg4 = 0;
+	unsigned long arg5 = 0;
+
+	switch(option) {
+		case PR_SET_NAME:
+		case PR_GET_NAME:
+		case PR_SET_DUMPABLE:
+			arg2 = va_arg(va, unsigned long);
+			break;
+		case PR_GET_DUMPABLE:
+			break;
+		default:
+			// Unified currently implements only simple prctl operations in-kernel.
+			// Do not speculatively read optional varargs here: many callers pass
+			// only the arguments their specific operation requires.
+			break;
+	}
+
+	return sys_prctl_args(option, arg2, arg3, arg4, arg5, out);
 }
 
 int sys_eventfd_create(unsigned int initval, int flags, int *fd) {
@@ -906,7 +963,14 @@ int sys_sysconf(int num, long *ret) {
 }
 
 int sys_thread_setname(void *tcb, const char *name) {
-	long ret = syscall(SYS_SETTIDID, name);
+	if(!name)
+		return EINVAL;
+
+	size_t nameLen = strlen(name);
+	if(nameLen > 15)
+		return ERANGE;
+
+	long ret = syscall(SYS_SETTIDID, name, nameLen + 1);
 	if (ret < 0) {
 		return -ret;
 	}

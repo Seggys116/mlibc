@@ -15,6 +15,35 @@
 #include <stdarg.h>
 #include <errno.h>
 
+extern "C" long __mlibc_posix_syscall_ret_helper(long ret) {
+    if (ret < 0) {
+        errno = (int)(-ret);
+        return -1L;
+    }
+    return ret;
+}
+
+#if defined(__x86_64__)
+extern "C" __attribute__((naked)) long syscall(long number, ...) {
+    __asm__ volatile(
+        // Keep the stack 16-byte aligned across the helper call. Our extended
+        // kernel ABI also accepts a 7th syscall argument in r12.
+        "push %r12\n\t"
+        "mov %rdi, %rax\n\t"
+        "mov 16(%rsp), %r11\n\t"
+        "mov 24(%rsp), %r12\n\t"
+        "mov %rsi, %rdi\n\t"
+        "mov %rdx, %rsi\n\t"
+        "mov %rcx, %rdx\n\t"
+        "mov %r8, %r10\n\t"
+        "mov %r11, %r8\n\t"
+        "int $0x69\n\t"
+        "mov %rax, %rdi\n\t"
+        "call __mlibc_posix_syscall_ret_helper\n\t"
+        "pop %r12\n\t"
+        "ret\n\t");
+}
+#else
 extern "C" long syscall(long number, ...) {
     va_list ap;
     va_start(ap, number);
@@ -28,12 +57,8 @@ extern "C" long syscall(long number, ...) {
     long a5 = va_arg(ap, long);
     va_end(ap);
 
-    long ret = syscalln6((uint64_t)number,
+    return __mlibc_posix_syscall_ret_helper(syscalln6((uint64_t)number,
                          (uint64_t)a0, (uint64_t)a1, (uint64_t)a2,
-                         (uint64_t)a3, (uint64_t)a4, (uint64_t)a5);
-    if (ret < 0) {
-        errno = (int)(-ret);
-        return -1L;
-    }
-    return ret;
+                         (uint64_t)a3, (uint64_t)a4, (uint64_t)a5));
 }
+#endif

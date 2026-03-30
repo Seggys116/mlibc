@@ -84,4 +84,27 @@ int sys_sigtimedwait(const sigset_t *__restrict set, siginfo_t *__restrict info,
     return 0;
 }
 
+int sys_sigqueue(pid_t pid, int sig, const union sigval val) {
+    siginfo_t si;
+    memset(&si, 0, sizeof(si));
+    si.si_signo = sig;
+    si.si_code = SI_QUEUE;
+    si.si_value = val;
+
+    long senderUid = syscall(SYS_GETUID);
+    if (senderUid < 0)
+        return -senderUid;
+    long senderPid = syscall(SYS_GETPID);
+    if (senderPid < 0)
+        return -senderPid;
+
+    si.si_uid = static_cast<uid_t>(senderUid);
+    si.si_pid = static_cast<pid_t>(senderPid);
+
+    long ret = syscall(SYS_SIGQUEUE, pid, sig, (uintptr_t)&si);
+    if (ret < 0)
+        return -ret;
+    return 0;
+}
+
 }

@@ -27,6 +27,10 @@ int setns(int fd, int nstype) {
 }
 
 int sched_getscheduler(pid_t pid) {
+	if(pid < 0) {
+		errno = EINVAL;
+		return -1;
+	}
 	MLIBC_CHECK_OR_ENOSYS(mlibc::sys_getscheduler, -1);
 	int policy;
 	if(int e = mlibc::sys_getscheduler(pid, &policy); e) {
@@ -71,11 +75,6 @@ int clone(int (*fn)(void *), void *stack, int flags, void *arg, ...) {
 		return -1;
 	}
 
-	if(flags & CLONE_PIDFD) {
-		errno = ENOSYS;
-		return -1;
-	}
-
 	va_list ap;
 	va_start(ap, arg);
 
@@ -83,7 +82,13 @@ int clone(int (*fn)(void *), void *stack, int flags, void *arg, ...) {
 	void *tls = nullptr;
 	pid_t *child_tid = nullptr;
 
-	if(flags & CLONE_PARENT_SETTID)
+	if((flags & CLONE_PIDFD) && (flags & CLONE_PARENT_SETTID)) {
+		va_end(ap);
+		errno = EINVAL;
+		return -1;
+	}
+
+	if(flags & (CLONE_PARENT_SETTID | CLONE_PIDFD))
 		parent_tid = va_arg(ap, pid_t *);
 	if(flags & CLONE_SETTLS)
 		tls = va_arg(ap, void *);

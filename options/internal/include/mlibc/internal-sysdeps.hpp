@@ -24,7 +24,13 @@ int sys_tcb_set(void *pointer);
 
 [[gnu::weak]] int sys_futex_tid();
 int sys_futex_wait(int *pointer, int expected, const struct timespec *time);
-int sys_futex_wake(int *pointer, int count = 1);
+int sys_futex_wake(int *pointer, int count);
+#ifndef MLIBC_SYS_FUTEX_WAKE_INLINE
+#define MLIBC_SYS_FUTEX_WAKE_INLINE
+inline int sys_futex_wake(int *pointer) {
+	return sys_futex_wake(pointer, 1);
+}
+#endif
 
 int sys_anon_allocate(size_t size, void **pointer);
 int sys_anon_free(void *pointer, size_t size);

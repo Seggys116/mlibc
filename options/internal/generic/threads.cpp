@@ -267,12 +267,13 @@ int thread_join(struct __mlibc_thread_data *thread, void *ret) {
 		observedFlags = expected;
 	}
 
-	// Wait for userspace exit publication first when available.
-	// Then wait for kernel thread teardown via CLONE_CHILD_CLEARTID (tid -> 0)
-	// so stack reclamation cannot race with a still-running thread.
-	while (!__atomic_load_n(&tcb->didExit, __ATOMIC_ACQUIRE)) {
-		mlibc::sys_futex_wait(&tcb->didExit, 0, nullptr);
-	}
+	// Wait for kernel thread teardown via CLONE_CHILD_CLEARTID (tid -> 0)
+	// before reclaiming the joined thread's stack.
+	//
+	// Normal exits publish didExit before entering sys_thread_exit(), but fatal
+	// signal/abnormal exit paths can clear the child TID without ever setting
+	// didExit. Waiting on didExit first wedges pthread_join() forever on those
+	// exits even though the kernel already issued the clear/wake.
 	for(;;) {
 		int observedTid = __atomic_load_n(&tcb->tid, __ATOMIC_ACQUIRE);
 		if(!observedTid)
@@ -447,9 +448,12 @@ int thread_mutex_init(struct __mlibc_mutex *__restrict mutex,
 	}
 
 	// TODO: Other values aren't supported yet.
-	__ensure(robust == __MLIBC_THREAD_MUTEX_STALLED);
-	__ensure(protocol == __MLIBC_THREAD_PRIO_NONE);
-	__ensure(pshared == __MLIBC_THREAD_PROCESS_PRIVATE);
+	if(robust != __MLIBC_THREAD_MUTEX_STALLED)
+		return ENOTSUP;
+	if(protocol != __MLIBC_THREAD_PRIO_NONE)
+		return ENOTSUP;
+	if(pshared != __MLIBC_THREAD_PROCESS_PRIVATE)
+		return ENOTSUP;
 
 	return 0;
 }
@@ -457,7 +461,8 @@ int thread_mutex_init(struct __mlibc_mutex *__restrict mutex,
 int thread_mutex_destroy(struct __mlibc_mutex *mutex) {
 	if (!mutex)
 		return 0;
-	__ensure(!mutex->__mlibc_state);
+	if(mutex->__mlibc_state)
+		return EBUSY;
 	return 0;
 }
 
@@ -466,29 +471,35 @@ int thread_mutex_timedlock(struct __mlibc_mutex *mutex, const struct timespec *_
 
 	unsigned int this_tid = mlibc::this_tid();
 	unsigned int expected = 0;
+	bool preserve_waiters = false;
 	while(true) {
-		if(!expected) {
-			// Try to take the mutex here.
+		unsigned int owner = expected & mutex_owner_mask;
+		if(!owner) {
+			// Try to take the mutex here. This must also handle the "waiters bit
+			// only" state left behind by unlock handoff; otherwise a racing
+			// non-waiter can steal the lock and strand existing sleepers.
+			unsigned int desired = this_tid | (expected & mutex_waiters_bit);
+			if(preserve_waiters)
+				desired |= mutex_waiters_bit;
 			if(__atomic_compare_exchange_n(&mutex->__mlibc_state,
-					&expected, this_tid, false, __ATOMIC_ACQUIRE, __ATOMIC_ACQUIRE)) {
+					&expected, desired, false, __ATOMIC_ACQUIRE, __ATOMIC_ACQUIRE)) {
 				__ensure(!mutex->__mlibc_recursion);
 				mutex->__mlibc_recursion = 1;
 				return 0;
 			}
 		}else{
 			// If this (recursive) mutex is already owned by us, increment the recursion level.
-			if((expected & mutex_owner_mask) == this_tid) {
-				if(!(mutex->__mlibc_flags & mutexRecursive)) {
-					if (!abstime)
-						return EDEADLK;
-				} else {
+			if(owner == this_tid) {
+				if(mutex->__mlibc_flags & mutexRecursive) {
 					++mutex->__mlibc_recursion;
 					return 0;
 				}
+				return EDEADLK;
 			}
 
 			// Wait on the futex if the waiters flag is set.
 			if(expected & mutex_waiters_bit) {
+				preserve_waiters = true;
 				int e;
 				if (abstime) {
 					// Adjust for the fact that sys_futex_wait accepts a *timeout*, but
@@ -520,8 +531,10 @@ int thread_mutex_timedlock(struct __mlibc_mutex *mutex, const struct timespec *_
 				// Otherwise we have to set the waiters flag first.
 				unsigned int desired = expected | mutex_waiters_bit;
 				if(__atomic_compare_exchange_n((int *)&mutex->__mlibc_state,
-						reinterpret_cast<int*>(&expected), desired, false, __ATOMIC_RELAXED, __ATOMIC_RELAXED))
+						reinterpret_cast<int*>(&expected), desired, false, __ATOMIC_RELAXED, __ATOMIC_RELAXED)) {
+					preserve_waiters = true;
 					expected = desired;
+				}
 			}
 		}
 	}
@@ -535,17 +548,19 @@ int thread_mutex_trylock(struct __mlibc_mutex *mutex) {
 	mutex = resolve_mutex_ptr(mutex, "thread_mutex_trylock");
 	unsigned int this_tid = mlibc::this_tid();
 	unsigned int expected = __atomic_load_n(&mutex->__mlibc_state, __ATOMIC_RELAXED);
-	if(!expected) {
+	unsigned int owner = expected & mutex_owner_mask;
+	if(!owner) {
 		// Try to take the mutex here.
+		unsigned int desired = this_tid | (expected & mutex_waiters_bit);
 		if(__atomic_compare_exchange_n(&mutex->__mlibc_state,
-						&expected, this_tid, false, __ATOMIC_ACQUIRE, __ATOMIC_ACQUIRE)) {
+						&expected, desired, false, __ATOMIC_ACQUIRE, __ATOMIC_ACQUIRE)) {
 			__ensure(!mutex->__mlibc_recursion);
 			mutex->__mlibc_recursion = 1;
 			return 0;
 		}
 	} else {
 		// If this (recursive) mutex is already owned by us, increment the recursion level.
-		if((expected & mutex_owner_mask) == this_tid) {
+		if(owner == this_tid) {
 			if(!(mutex->__mlibc_flags & mutexRecursive)) {
 				return EBUSY;
 			}
@@ -559,33 +574,44 @@ int thread_mutex_trylock(struct __mlibc_mutex *mutex) {
 
 int thread_mutex_unlock(struct __mlibc_mutex *mutex) {
 	mutex = resolve_mutex_ptr(mutex, "thread_mutex_unlock");
+	auto flags = mutex->__mlibc_flags;
+	unsigned int this_tid = mlibc::this_tid();
+	unsigned int state = __atomic_load_n(&mutex->__mlibc_state, __ATOMIC_ACQUIRE);
+	unsigned int owner = state & mutex_owner_mask;
+
+	if(!owner)
+		return (flags & mutexErrorCheck) ? EINVAL : EPERM;
+	if(owner != this_tid)
+		return EPERM;
+
 	// Decrement the recursion level and unlock if we hit zero.
-	__ensure(mutex->__mlibc_recursion);
+	if(!mutex->__mlibc_recursion)
+		return (flags & mutexErrorCheck) ? EINVAL : EPERM;
 	if(--mutex->__mlibc_recursion)
 		return 0;
 
-	auto flags = mutex->__mlibc_flags;
-
-	// Reset the mutex to the unlocked state.
-	auto state = __atomic_exchange_n(&mutex->__mlibc_state, 0, __ATOMIC_RELEASE);
+	// Keep the waiters bit published across the unlock handoff. If we clear the
+	// state to 0 here, a fresh contender can grab the mutex before the woken
+	// waiter runs and erase the only signal that sleepers still exist.
+	unsigned int unlocked_state = (state & mutex_waiters_bit) ? mutex_waiters_bit : 0;
+	state = __atomic_exchange_n(&mutex->__mlibc_state, unlocked_state, __ATOMIC_RELEASE);
 
 	// After this point the mutex is unlocked, and therefore we cannot access its contents as it
 	// may have been destroyed by another thread.
 
-	unsigned int this_tid = mlibc::this_tid();
-	if ((flags & mutexErrorCheck) && (state & mutex_owner_mask) != this_tid)
-		return EPERM;
-
-	if ((flags & mutexErrorCheck) && !(state & mutex_owner_mask))
-		return EINVAL;
-
 	__ensure((state & mutex_owner_mask) == this_tid);
 
 	if(state & mutex_waiters_bit) {
-		// Wake the futex if there were waiters. Since the mutex might not exist at this location
-		// anymore, we must conservatively ignore EACCES and EINVAL which may occur as a result.
+		// Preserve wake-one handoff for contended mutexes. A waiter that
+		// acquires the mutex keeps mutex_waiters_bit set so the next unlock
+		// continues waking the remaining sleepers instead of stranding them.
 		int e = mlibc::sys_futex_wake((int *)&mutex->__mlibc_state);
 		__ensure(e >= 0 || e == EACCES || e == EINVAL);
+		if(e == 0) {
+			unsigned int expected = mutex_waiters_bit;
+			__atomic_compare_exchange_n(&mutex->__mlibc_state,
+					&expected, 0u, false, __ATOMIC_RELEASE, __ATOMIC_RELAXED);
+		}
 	}
 
 	return 0;
@@ -621,6 +647,8 @@ int thread_mutexattr_settype(struct __mlibc_mutexattr *attr, int type) {
 int thread_cond_init(struct __mlibc_cond *__restrict cond, const struct __mlibc_condattr *__restrict attr) {
 	auto clock = attr ? attr->__mlibc_clock : CLOCK_REALTIME;
 	auto pshared = attr ? attr->__mlibc_pshared : __MLIBC_THREAD_PROCESS_PRIVATE;
+	if(pshared != __MLIBC_THREAD_PROCESS_PRIVATE)
+		return ENOTSUP;
 
 	cond->__mlibc_clock = clock;
 	cond->__mlibc_flags = pshared;
@@ -653,7 +681,8 @@ int thread_cond_broadcast(struct __mlibc_cond *cond) {
 int thread_cond_timedwait(struct __mlibc_cond *__restrict cond, __mlibc_mutex *__restrict mutex,
 		const struct timespec *__restrict abstime, clockid_t clockid) {
 	// TODO: pshared isn't supported yet.
-	__ensure(cond->__mlibc_flags == 0);
+	if(cond->__mlibc_flags != 0)
+		return ENOTSUP;
 
 	constexpr long nanos_per_second = 1'000'000'000;
 	if (abstime && (abstime->tv_nsec < 0 || abstime->tv_nsec >= nanos_per_second))
@@ -661,10 +690,9 @@ int thread_cond_timedwait(struct __mlibc_cond *__restrict cond, __mlibc_mutex *_
 
 	auto seq = __atomic_load_n(&cond->__mlibc_seq, __ATOMIC_ACQUIRE);
 
-	// TODO: handle locking errors and cancellation properly.
 	while (true) {
-		if (thread_mutex_unlock(mutex))
-			__ensure(!"Failed to unlock the mutex");
+		if (int unlock_error = thread_mutex_unlock(mutex); unlock_error)
+			return unlock_error;
 
 		int e;
 		if (abstime) {
@@ -672,12 +700,12 @@ int thread_cond_timedwait(struct __mlibc_cond *__restrict cond, __mlibc_mutex *_
 			// pthread_cond_timedwait accepts an *absolute time*.
 			struct timespec timeout;
 			if (!mlibc::time_absolute_to_relative(clockid, abstime, &timeout)) {
-				if (thread_mutex_lock(mutex))
-					__ensure(!"Failed to lock the mutex");
+				if (int lock_error = thread_mutex_lock(mutex); lock_error)
+					return lock_error;
 				return EINVAL;
 			} else if (timeout.tv_sec == 0 && timeout.tv_nsec == 0) {
-				if (thread_mutex_lock(mutex))
-					__ensure(!"Failed to lock the mutex");
+				if (int lock_error = thread_mutex_lock(mutex); lock_error)
+					return lock_error;
 				return ETIMEDOUT;
 			}
 
@@ -686,8 +714,8 @@ int thread_cond_timedwait(struct __mlibc_cond *__restrict cond, __mlibc_mutex *_
 			e = mlibc::sys_futex_wait((int *)&cond->__mlibc_seq, seq, nullptr);
 		}
 
-		if (thread_mutex_lock(mutex))
-			__ensure(!"Failed to lock the mutex");
+		if (int lock_error = thread_mutex_lock(mutex); lock_error)
+			return lock_error;
 
 		// There are four cases to handle:
 		//   1. e == 0: this indicates a (potentially spurious) wakeup. The value of
@@ -717,7 +745,7 @@ int thread_cond_timedwait(struct __mlibc_cond *__restrict cond, __mlibc_mutex *_
 			__ensure(abstime);
 			return ETIMEDOUT;
 		} else {
-			mlibc::panicLogger() << "sys_futex_wait() failed with error " << e << frg::endlog;
+			return e;
 		}
 	}
 }

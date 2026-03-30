@@ -40,11 +40,8 @@ int sched_get_priority_min(int policy) {
 }
 
 int sched_setscheduler(pid_t pid, int policy, const struct sched_param *param) {
-	int old_policy = 0;
-
-	auto get_sysdep = MLIBC_CHECK_OR_ENOSYS(mlibc::sys_getscheduler, -1);
-	if(int e = get_sysdep(pid, &old_policy); e) {
-		errno = e;
+	if(pid < 0 || !param) {
+		errno = EINVAL;
 		return -1;
 	}
 
@@ -54,10 +51,14 @@ int sched_setscheduler(pid_t pid, int policy, const struct sched_param *param) {
 		return -1;
 	}
 
-	return old_policy;
+	return 0;
 }
 
 int sched_getparam(pid_t pid, struct sched_param *param) {
+	if(pid < 0 || !param) {
+		errno = EINVAL;
+		return -1;
+	}
 	auto sysdep = MLIBC_CHECK_OR_ENOSYS(mlibc::sys_getparam, -1);
 	if(int e = sysdep(pid, param); e) {
 		errno = e;
@@ -67,6 +68,10 @@ int sched_getparam(pid_t pid, struct sched_param *param) {
 }
 
 int sched_setparam(pid_t pid, const struct sched_param *param) {
+	if(pid < 0 || !param) {
+		errno = EINVAL;
+		return -1;
+	}
 	auto sysdep = MLIBC_CHECK_OR_ENOSYS(mlibc::sys_setparam, -1);
 	if(int e = sysdep(pid, param); e) {
 		errno = e;

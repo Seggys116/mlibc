@@ -199,6 +199,14 @@
 #define SYS_GETPRIORITYMIN      196
 #define SYS_FDATASYNC           197
 #define SYS_MINCORE            198
+#define SYS_EXIT_GROUP         199
+#define SYS_WAITID             200
+#define SYS_PIDFD_OPEN         201
+#define SYS_PIDFD_GETPID       202
+#define SYS_PIDFD_SEND_SIGNAL  203
+#define SYS_SIGQUEUE           204
+#define SYS_TGSIGQUEUE         205
+#define SYS_WAIT4              206
 
 #ifdef __cplusplus
 extern "C"{
@@ -207,28 +215,28 @@ extern "C"{
 __attribute__((__always_inline__))
 static inline long syscalln0(uint64_t call) {
     volatile long ret;
-    __asm__ volatile("int $0x69" : "=a"(ret) : "a"(call));
+    __asm__ volatile("int $0x69" : "=a"(ret) : "a"(call) : "memory", "cc");
     return ret;
 }
 
 __attribute__((__always_inline__))
 static long syscalln1(uint64_t call, uint64_t arg0) {
     volatile long ret;
-    __asm__ volatile("int $0x69" : "=a"(ret) : "a"(call), "D"(arg0) : "memory");
+    __asm__ volatile("int $0x69" : "=a"(ret) : "a"(call), "D"(arg0) : "memory", "cc");
     return ret;
 }
 
 __attribute__((__always_inline__))
 static long syscalln2(uint64_t call, uint64_t arg0, uint64_t arg1) {
     volatile long ret;
-    __asm__ volatile("int $0x69" : "=a"(ret) : "a"(call), "D"(arg0), "S"(arg1) : "memory");
+    __asm__ volatile("int $0x69" : "=a"(ret) : "a"(call), "D"(arg0), "S"(arg1) : "memory", "cc");
     return ret;
 }
 
 __attribute__((__always_inline__))
 static long syscalln3(uint64_t call, uint64_t arg0, uint64_t arg1, uint64_t arg2) {
     volatile long ret;
-    __asm__ volatile("int $0x69" : "=a"(ret) : "a"(call), "D"(arg0), "S"(arg1), "d"(arg2) : "memory");
+    __asm__ volatile("int $0x69" : "=a"(ret) : "a"(call), "D"(arg0), "S"(arg1), "d"(arg2) : "memory", "cc");
     return ret;
 }
 
@@ -236,7 +244,7 @@ __attribute__((__always_inline__))
 static long syscalln4(uint64_t call, uint64_t arg0, uint64_t arg1, uint64_t arg2, uint64_t arg3) {
     volatile long ret;
 	register uint64_t arg3r __asm__("r10") = arg3; /* put arg3 in r10 */
-    __asm__ volatile("int $0x69" : "=a"(ret) : "a"(call), "D"(arg0), "S"(arg1), "d"(arg2), "r"(arg3r) : "memory");
+    __asm__ volatile("int $0x69" : "=a"(ret) : "a"(call), "D"(arg0), "S"(arg1), "d"(arg2), "r"(arg3r) : "memory", "cc");
     return ret;
 }
 
@@ -245,7 +253,7 @@ static long syscalln5(uint64_t call, uint64_t arg0, uint64_t arg1, uint64_t arg2
     volatile long ret;
 	register uint64_t arg3r __asm__("r10") = arg3; /* put arg3 in r10 */
 	register uint64_t arg4r __asm__("r9") = arg4; /* put arg4 in r9 */
-    __asm__ volatile("int $0x69" : "=a"(ret) : "a"(call), "D"(arg0), "S"(arg1), "d"(arg2), "r"(arg3r), "r"(arg4r) : "memory");
+    __asm__ volatile("int $0x69" : "=a"(ret) : "a"(call), "D"(arg0), "S"(arg1), "d"(arg2), "r"(arg3r), "r"(arg4r) : "memory", "cc");
     return ret;
 }
 
@@ -255,7 +263,7 @@ static long syscalln6(uint64_t call, uint64_t arg0, uint64_t arg1, uint64_t arg2
 	register uint64_t arg3r __asm__("r10") = arg3; /* put arg3 in r10 */
 	register uint64_t arg4r __asm__("r9") = arg4; /* put arg4 in r9 */
 	register uint64_t arg5r __asm__("r8") = arg5; /* put arg5 in r8 */
-    __asm__ volatile("int $0x69" : "=a"(ret) : "a"(call), "D"(arg0), "S"(arg1), "d"(arg2), "r"(arg3r), "r"(arg4r), "r"(arg5r) : "memory");
+    __asm__ volatile("int $0x69" : "=a"(ret) : "a"(call), "D"(arg0), "S"(arg1), "d"(arg2), "r"(arg3r), "r"(arg4r), "r"(arg5r) : "memory", "cc");
     return ret;
 }
 
@@ -268,7 +276,7 @@ static long syscalln7(uint64_t call, uint64_t arg0, uint64_t arg1, uint64_t arg2
 	register uint64_t arg4r __asm__("r9") = arg4; /* put arg4 in r9 */
 	register uint64_t arg5r __asm__("r8") = arg5; /* put arg5 in r8 */
 	register uint64_t arg6r __asm__("r12") = arg6; /* put arg6 in r12 */
-    __asm__ volatile("int $0x69" : "=a"(ret) : "a"(call), "D"(arg0), "S"(arg1), "d"(arg2), "r"(arg3r), "r"(arg4r), "r"(arg5r), "r"(arg6r) : "memory");
+    __asm__ volatile("int $0x69" : "=a"(ret) : "a"(call), "D"(arg0), "S"(arg1), "d"(arg2), "r"(arg3r), "r"(arg4r), "r"(arg5r), "r"(arg6r) : "memory", "cc");
     return ret;
 }
 

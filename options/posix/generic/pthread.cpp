@@ -28,33 +28,11 @@ namespace {
 static constexpr int kJoinableBit = 1;
 }
 
-struct ScopeTrace {
-	ScopeTrace(const char *file, int line, const char *function)
-	: _file(file), _line(line), _function(function) {
-		if(mlibc::globalConfigIsInitializing())
-			return;
-		if(!mlibc::globalConfig().debugPthreadTrace)
-			return;
-		mlibc::infoLogger() << "trace: Enter scope "
-				<< _file << ":" << _line << " (in function "
-				<< _function << ")" << frg::endlog;
-	}
-
-	~ScopeTrace() {
-		if(mlibc::globalConfigIsInitializing())
-			return;
-		if(!mlibc::globalConfig().debugPthreadTrace)
-			return;
-		mlibc::infoLogger() << "trace: Exit scope" << frg::endlog;
-	}
-
-private:
-	const char *_file;
-	int _line;
-	const char *_function;
-};
-
-#define SCOPE_TRACE() ScopeTrace(__FILE__, __LINE__, __FUNCTION__)
+// This trace hook injects C++ ctor/dtor calls into every pthread primitive.
+// That has been destabilizing the Unified userspace runtime, including crashes
+// in pthread_rwlock_* before the actual lock logic executes. Keep the tracing
+// scaffold compiled out for now until the logging path is proven ABI-safe.
+#define SCOPE_TRACE() ((void)0)
 
 // TODO: either use uint32_t or determine the bit based on sizeof(int).
 static constexpr unsigned int mutex_owner_mask = (static_cast<uint32_t>(1) << 30) - 1;
@@ -413,6 +391,11 @@ void pthread_cleanup_pop(int execute) {
 int pthread_setname_np(pthread_t thread, const char *name) {
 	auto tcb = reinterpret_cast<Tcb*>(thread);
 
+	if(!name)
+		return EINVAL;
+	if(strlen(name) > 15)
+		return ERANGE;
+
 	auto sysdep = MLIBC_CHECK_OR_ENOSYS(mlibc::sys_thread_setname, ENOSYS);
 	if(int e = sysdep(tcb, name); e) {
 		return e;
@@ -423,6 +406,11 @@ int pthread_setname_np(pthread_t thread, const char *name) {
 
 int pthread_getname_np(pthread_t thread, char *name, size_t size) {
 	auto tcb = reinterpret_cast<Tcb*>(thread);
+
+	if(!name)
+		return EINVAL;
+	if(size < 16)
+		return ERANGE;
 
 	auto sysdep = MLIBC_CHECK_OR_ENOSYS(mlibc::sys_thread_getname, ENOSYS);
 	if(int e = sysdep(tcb, name, size); e) {
@@ -778,6 +766,8 @@ int pthread_mutexattr_getpshared(const pthread_mutexattr_t *attr, int *pshared) 
 int pthread_mutexattr_setpshared(pthread_mutexattr_t *attr, int pshared) {
 	if (pshared != PTHREAD_PROCESS_PRIVATE && pshared != PTHREAD_PROCESS_SHARED)
 		return EINVAL;
+	if (pshared == PTHREAD_PROCESS_SHARED)
+		return ENOTSUP;
 
 	attr->__mlibc_pshared = pshared;
 	return 0;
@@ -854,8 +844,7 @@ int pthread_mutex_unlock(pthread_mutex_t *mutex) {
 }
 
 int pthread_mutex_consistent(pthread_mutex_t *) {
-	__ensure(!"Not implemented");
-	__builtin_unreachable();
+	return ENOTSUP;
 }
 
 // ----------------------------------------------------------------------------
@@ -898,6 +887,8 @@ int pthread_condattr_getpshared(const pthread_condattr_t *__restrict attr,
 int pthread_condattr_setpshared(pthread_condattr_t *attr, int pshared) {
 	if (pshared != PTHREAD_PROCESS_PRIVATE && pshared != PTHREAD_PROCESS_SHARED)
 		return EINVAL;
+	if (pshared == PTHREAD_PROCESS_SHARED)
+		return ENOTSUP;
 
 	attr->__mlibc_pshared = pshared;
 	return 0;
@@ -959,6 +950,8 @@ int pthread_barrierattr_getpshared(const pthread_barrierattr_t *__restrict attr,
 int pthread_barrierattr_setpshared(pthread_barrierattr_t *attr, int pshared) {
 	if (pshared != PTHREAD_PROCESS_SHARED && pshared != PTHREAD_PROCESS_PRIVATE)
 		return EINVAL;
+	if (pshared == PTHREAD_PROCESS_SHARED)
+		return ENOTSUP;
 
 	attr->__mlibc_pshared = pshared;
 	return 0;
@@ -980,6 +973,8 @@ int pthread_barrier_init(pthread_barrier_t *__restrict barrier,
 
 	// Since we don't implement these yet, set a flag to error later.
 	auto pshared = attr ? attr->__mlibc_pshared : PTHREAD_PROCESS_PRIVATE;
+	if (pshared != PTHREAD_PROCESS_PRIVATE)
+		return ENOTSUP;
 	barrier->__mlibc_flags = pshared;
 
 	return 0;
@@ -1002,10 +997,8 @@ int pthread_barrier_destroy(pthread_barrier_t *barrier) {
 }
 
 int pthread_barrier_wait(pthread_barrier_t *barrier) {
-	if (barrier->__mlibc_flags != 0) {
-		mlibc::panicLogger() << "mlibc: pthread_barrier_t flags were non-zero"
-			<< frg::endlog;
-	}
+	if (barrier->__mlibc_flags != 0)
+		return ENOTSUP;
 
 	// inside is incremented on entry and decremented on exit.
 	// This is used to synchronise with pthread_barrier_destroy, to ensure that a thread doesn't pass
@@ -1058,34 +1051,41 @@ int pthread_barrier_wait(pthread_barrier_t *barrier) {
 
 namespace {
 	int rwlock_m_lock(pthread_rwlock_t *rw, bool excl, const struct timespec *__restrict timeout = nullptr) {
+		unsigned int this_tid = mlibc::this_tid();
 		unsigned int m_expected = __atomic_load_n(&rw->__mlibc_m, __ATOMIC_RELAXED);
+		bool preserve_waiters = false;
 		while(true) {
-			if(m_expected) {
-				__ensure(m_expected & mutex_owner_mask);
-
-				// Try to set the waiters bit.
-				if(!(m_expected & mutex_waiters_bit)) {
-					unsigned int desired = m_expected | mutex_waiters_bit;
-					if(!__atomic_compare_exchange_n(&rw->__mlibc_m,
-							&m_expected, desired, false, __ATOMIC_RELAXED, __ATOMIC_RELAXED))
-						continue;
-				}
-
-				// Wait on the futex.
-				int e = mlibc::sys_futex_wait((int *)&rw->__mlibc_m, m_expected | mutex_waiters_bit, timeout);
-				if (e != 0 && e != EAGAIN && e != EINTR)
-					return e;
-
-				// Opportunistically try to take the lock after we wake up.
-				m_expected = 0;
-			}else{
+			if(!m_expected) {
 				// Try to lock the mutex.
-				unsigned int desired = 1;
+				unsigned int desired = this_tid;
+				if(preserve_waiters)
+					desired |= mutex_waiters_bit;
 				if(excl)
 					desired |= mutex_excl_bit;
 				if(__atomic_compare_exchange_n(&rw->__mlibc_m,
 						&m_expected, desired, false, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED))
 					break;
+			}else{
+				if(!(m_expected & mutex_owner_mask))
+					return EINVAL;
+
+				// Try to set the waiters bit.
+				if(m_expected & mutex_waiters_bit) {
+					preserve_waiters = true;
+					int e = mlibc::sys_futex_wait((int *)&rw->__mlibc_m,
+							m_expected, timeout);
+					if (e != 0 && e != EAGAIN && e != EINTR)
+						return e;
+					// Opportunistically try to take the lock after we wake up.
+					m_expected = 0;
+				}else{
+					unsigned int desired = m_expected | mutex_waiters_bit;
+					if(__atomic_compare_exchange_n(&rw->__mlibc_m,
+							&m_expected, desired, false, __ATOMIC_RELAXED, __ATOMIC_RELAXED)) {
+						preserve_waiters = true;
+						m_expected = desired;
+					}
+				}
 			}
 		}
 
@@ -1093,10 +1093,11 @@ namespace {
 	}
 
 	int rwlock_m_trylock(pthread_rwlock_t *rw, bool excl) {
+		unsigned int this_tid = mlibc::this_tid();
 		unsigned int m_expected = __atomic_load_n(&rw->__mlibc_m, __ATOMIC_RELAXED);
 		if(!m_expected) {
 			// Try to lock the mutex.
-			unsigned int desired = 1;
+			unsigned int desired = this_tid;
 			if(excl)
 				desired |= mutex_excl_bit;
 			if(__atomic_compare_exchange_n(&rw->__mlibc_m,
@@ -1104,7 +1105,8 @@ namespace {
 				return 0;
 		}
 
-		__ensure(m_expected & mutex_owner_mask);
+		if(!(m_expected & mutex_owner_mask))
+			return EINVAL;
 
 		// POSIX says that this function should never block but also that
 		// readers should not be blocked by readers. We implement this by returning EAGAIN
@@ -1136,6 +1138,8 @@ int pthread_rwlockattr_getpshared(const pthread_rwlockattr_t *__restrict attr,
 int pthread_rwlockattr_setpshared(pthread_rwlockattr_t *attr, int pshared) {
 	if (pshared != PTHREAD_PROCESS_SHARED && pshared != PTHREAD_PROCESS_PRIVATE)
 		return EINVAL;
+	if (pshared == PTHREAD_PROCESS_SHARED)
+		return ENOTSUP;
 
 	attr->__mlibc_pshared = pshared;
 	return 0;
@@ -1152,23 +1156,23 @@ int pthread_rwlock_init(pthread_rwlock_t *__restrict rw, const pthread_rwlockatt
 
 	// Since we don't implement this yet, set a flag to error later.
 	auto pshared = attr ? attr->__mlibc_pshared : PTHREAD_PROCESS_PRIVATE;
+	if (pshared != PTHREAD_PROCESS_PRIVATE)
+		return ENOTSUP;
 	rw->__mlibc_flags = pshared;
 	return 0;
 }
 
 int pthread_rwlock_destroy(pthread_rwlock_t *rw) {
-	__ensure(!rw->__mlibc_m);
-	__ensure(!rw->__mlibc_rc);
+	if(rw->__mlibc_m || rw->__mlibc_rc)
+		return EBUSY;
 	return 0;
 }
 
 int pthread_rwlock_trywrlock(pthread_rwlock_t *rw) {
 	SCOPE_TRACE();
 
-	if (rw->__mlibc_flags != 0) {
-		mlibc::panicLogger() << "mlibc: pthread_rwlock_t flags were non-zero"
-			<< frg::endlog;
-	}
+	if (rw->__mlibc_flags != 0)
+		return ENOTSUP;
 
 	// Take the __mlibc_m mutex.
 	// Will be released in pthread_rwlock_unlock().
@@ -1188,14 +1192,13 @@ int pthread_rwlock_trywrlock(pthread_rwlock_t *rw) {
 int pthread_rwlock_wrlock(pthread_rwlock_t *rw) {
 	SCOPE_TRACE();
 
-	if (rw->__mlibc_flags != 0) {
-		mlibc::panicLogger() << "mlibc: pthread_rwlock_t flags were non-zero"
-			<< frg::endlog;
-	}
+	if (rw->__mlibc_flags != 0)
+		return ENOTSUP;
 
 	// Take the __mlibc_m mutex.
 	// Will be released in pthread_rwlock_unlock().
-	rwlock_m_lock(rw, true);
+	if(int e = rwlock_m_lock(rw, true); e)
+		return e;
 
 	// Now wait until there are no more readers.
 	unsigned int rc_expected = __atomic_load_n(&rw->__mlibc_rc, __ATOMIC_ACQUIRE);
@@ -1203,7 +1206,10 @@ int pthread_rwlock_wrlock(pthread_rwlock_t *rw) {
 		if(!rc_expected)
 			break;
 
-		__ensure(rc_expected & rc_count_mask);
+		if(!(rc_expected & rc_count_mask)) {
+			rwlock_m_unlock(rw);
+			return EINVAL;
+		}
 
 		// Try to set the waiters bit.
 		if(!(rc_expected & rc_waiters_bit)) {
@@ -1214,7 +1220,11 @@ int pthread_rwlock_wrlock(pthread_rwlock_t *rw) {
 		}
 
 		// Wait on the futex.
-		mlibc::sys_futex_wait((int *)&rw->__mlibc_rc, rc_expected | rc_waiters_bit, nullptr);
+		int e = mlibc::sys_futex_wait((int *)&rw->__mlibc_rc, rc_expected | rc_waiters_bit, nullptr);
+		if(e != 0 && e != EAGAIN && e != EINTR) {
+			rwlock_m_unlock(rw);
+			return e;
+		}
 
 		// Re-check the reader counter.
 		rc_expected = __atomic_load_n(&rw->__mlibc_rc, __ATOMIC_ACQUIRE);
@@ -1230,10 +1240,10 @@ int pthread_rwlock_timedwrlock(pthread_rwlock_t *rw, const struct timespec *__re
 int pthread_rwlock_clockwrlock(pthread_rwlock_t *rw, clockid_t clock, const struct timespec *__restrict abstime) {
 	SCOPE_TRACE();
 
-	if (rw->__mlibc_flags != 0) {
-		mlibc::panicLogger() << "mlibc: pthread_rwlock_t flags were non-zero"
-			<< frg::endlog;
-	}
+	if (rw->__mlibc_flags != 0)
+		return ENOTSUP;
+	if (!abstime)
+		return EINVAL;
 
 	// Adjust for the fact that sys_futex_wait accepts a *timeout*, but
 	// pthread_rwlock_timedwrlock accepts an *absolute time*.
@@ -1250,7 +1260,7 @@ int pthread_rwlock_clockwrlock(pthread_rwlock_t *rw, clockid_t clock, const stru
 	// Take the __mlibc_m mutex.
 	// Will be released in pthread_rwlock_unlock().
 	if (int e = rwlock_m_lock(rw, true, &timeout); e)
-		return ETIMEDOUT;
+		return e;
 
 	// Now wait until there are no more readers.
 	unsigned int rc_expected = __atomic_load_n(&rw->__mlibc_rc, __ATOMIC_ACQUIRE);
@@ -1258,7 +1268,10 @@ int pthread_rwlock_clockwrlock(pthread_rwlock_t *rw, clockid_t clock, const stru
 		if(!rc_expected)
 			break;
 
-		__ensure(rc_expected & rc_count_mask);
+		if(!(rc_expected & rc_count_mask)) {
+			rwlock_m_unlock(rw);
+			return EINVAL;
+		}
 
 		// Try to set the waiters bit.
 		if(!(rc_expected & rc_waiters_bit)) {
@@ -1268,10 +1281,14 @@ int pthread_rwlock_clockwrlock(pthread_rwlock_t *rw, clockid_t clock, const stru
 				continue;
 		}
 
-		if (!mlibc::time_absolute_to_relative(clock, abstime, &timeout))
+		if (!mlibc::time_absolute_to_relative(clock, abstime, &timeout)) {
+			rwlock_m_unlock(rw);
 			return EINVAL;
-		if (timeout.tv_sec == 0 && timeout.tv_nsec == 0)
+		}
+		if (timeout.tv_sec == 0 && timeout.tv_nsec == 0) {
+			rwlock_m_unlock(rw);
 			return ETIMEDOUT;
+		}
 
 		// Wait on the futex.
 		int e = mlibc::sys_futex_wait((int *)&rw->__mlibc_rc, rc_expected | rc_waiters_bit, &timeout);
@@ -1290,10 +1307,8 @@ int pthread_rwlock_clockwrlock(pthread_rwlock_t *rw, clockid_t clock, const stru
 int pthread_rwlock_tryrdlock(pthread_rwlock_t *rw) {
 	SCOPE_TRACE();
 
-	if (rw->__mlibc_flags != 0) {
-		mlibc::panicLogger() << "mlibc: pthread_rwlock_t flags were non-zero"
-			<< frg::endlog;
-	}
+	if (rw->__mlibc_flags != 0)
+		return ENOTSUP;
 
 	// Increment the reader count while holding the __mlibc_m mutex.
 	if(int e = rwlock_m_trylock(rw, false); e)
@@ -1307,13 +1322,12 @@ int pthread_rwlock_tryrdlock(pthread_rwlock_t *rw) {
 int pthread_rwlock_rdlock(pthread_rwlock_t *rw) {
 	SCOPE_TRACE();
 
-	if (rw->__mlibc_flags != 0) {
-		mlibc::panicLogger() << "mlibc: pthread_rwlock_t flags were non-zero"
-			<< frg::endlog;
-	}
+	if (rw->__mlibc_flags != 0)
+		return ENOTSUP;
 
 	// Increment the reader count while holding the __mlibc_m mutex.
-	rwlock_m_lock(rw, false);
+	if(int e = rwlock_m_lock(rw, false); e)
+		return e;
 	__atomic_fetch_add(&rw->__mlibc_rc, 1, __ATOMIC_ACQUIRE);
 	rwlock_m_unlock(rw);
 
@@ -1327,10 +1341,10 @@ int pthread_rwlock_timedrdlock(pthread_rwlock_t *rw, const struct timespec *__re
 int pthread_rwlock_clockrdlock(pthread_rwlock_t *rw, clockid_t clock, const struct timespec *__restrict abstime) {
 	SCOPE_TRACE();
 
-	if (rw->__mlibc_flags != 0) {
-		mlibc::panicLogger() << "mlibc: pthread_rwlock_t flags were non-zero"
-			<< frg::endlog;
-	}
+	if (rw->__mlibc_flags != 0)
+		return ENOTSUP;
+	if (!abstime)
+		return EINVAL;
 
 	// Adjust for the fact that sys_futex_wait accepts a *timeout*, but
 	// pthread_rwlock_timedwrlock accepts an *absolute time*.
@@ -1356,16 +1370,27 @@ int pthread_rwlock_clockrdlock(pthread_rwlock_t *rw, clockid_t clock, const stru
 int pthread_rwlock_unlock(pthread_rwlock_t *rw) {
 	SCOPE_TRACE();
 
+	if (rw->__mlibc_flags != 0)
+		return ENOTSUP;
+
 	unsigned int rc_expected = __atomic_load_n(&rw->__mlibc_rc, __ATOMIC_RELAXED);
 	if(!rc_expected) {
 		// We are doing a write-unlock.
+		unsigned int this_tid = mlibc::this_tid();
+		unsigned int m_state = __atomic_load_n(&rw->__mlibc_m, __ATOMIC_ACQUIRE);
+		unsigned int owner = m_state & mutex_owner_mask;
+		if(!owner)
+			return EINVAL;
+		if(owner != this_tid)
+			return EPERM;
 		rwlock_m_unlock(rw);
 		return 0;
 	}else{
 		// We are doing a read-unlock.
 		while(true) {
 			unsigned int count = rc_expected & rc_count_mask;
-			__ensure(count);
+			if(!count)
+				return EINVAL;
 
 			// Try to decrement the count.
 			if(count == 1 && (rc_expected & rc_waiters_bit)) {
@@ -1439,7 +1464,8 @@ int pthread_spin_trylock(pthread_spinlock_t *__lock) {
 }
 
 int pthread_spin_unlock(pthread_spinlock_t *__lock) {
-	__ensure(__atomic_load_n(&__lock->__lock, __ATOMIC_RELAXED) == mlibc::this_tid());
+	if(__atomic_load_n(&__lock->__lock, __ATOMIC_RELAXED) != mlibc::this_tid())
+		return EPERM;
 	__atomic_store_n(&__lock->__lock, 0, __ATOMIC_RELEASE);
 	return 0;
 }

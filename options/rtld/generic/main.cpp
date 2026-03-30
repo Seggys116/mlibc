@@ -11,6 +11,7 @@
 #include <mlibc/rtld-config.hpp>
 #include <mlibc/rtld-abi.hpp>
 #include <mlibc/stack_protector.hpp>
+#include <mlibc/tid.hpp>
 #include <internal-config.h>
 #include <abi-bits/auxv.h>
 
@@ -300,6 +301,7 @@ extern "C" void *interpreterMain(uintptr_t *entry_stack) {
 	earlyTcb.dtvPointers = nullptr;
 	earlyTcb.dtvSize = 0;
 	earlyTcb.tid = mlibc::this_tid();
+	earlyTcb.futexTidCache = mlibc::sanitize_tid(earlyTcb.tid);
 	if(mlibc::sys_tcb_set(&earlyTcb))
 		__ensure(!"sys_tcb_set() failed");
 	mlibc::tcb_available_flag = true;
@@ -599,7 +601,20 @@ extern "C" void *interpreterMain(uintptr_t *entry_stack) {
 	mlibc::initStackGuard(stack_entropy);
 
 	auto tcb = allocateTcb();
-	tcb->tid = earlyTcb.tid;
+	unsigned int liveTid = 0;
+	if(mlibc::sys_futex_tid)
+		liveTid = mlibc::sanitize_tid(mlibc::sys_futex_tid());
+	if(!liveTid)
+		liveTid = mlibc::sanitize_tid(earlyTcb.tid);
+	tcb->tid = static_cast<int>(liveTid);
+	tcb->futexTidCache = static_cast<int>(liveTid);
+	// The initial thread is special: its static TLS must be materialized before
+	// the new TCB becomes live, and that one-time initialization must also mark
+	// the initial objects as done. Using the per-pthread path here leaves
+	// tlsInitialized false, so linker.initObjects() re-copies libc/ld.so TLS
+	// into the live main-thread block a second time and can clobber state that
+	// was already established after sys_tcb_set().
+	initTlsObjects(tcb, globalScope->_objects, true);
 	if(mlibc::sys_tcb_set(tcb))
 		__ensure(!"sys_tcb_set() failed");
 
@@ -610,11 +625,20 @@ extern "C" void *interpreterMain(uintptr_t *entry_stack) {
 
 	linker.initObjects(initialRepository.get());
 
+	// AT_ENTRY is the kernel-provided executable entry point and remains the
+	// authoritative handoff target for this exec. Some startup paths can
+	// transiently clobber executableSO->entry before we return to _start();
+	// always prefer the preserved auxv value and only fall back if it is absent.
+	void *resolvedEntry = entry_pointer ? entry_pointer : executableSO->entry;
+	__ensure(resolvedEntry);
+	if(resolvedEntry != executableSO->entry)
+		executableSO->entry = resolvedEntry;
+
 	if(rtldConfig.debug)
 		mlibc::infoLogger() << "Leaving ld.so, jump to "
-				<< (void *)executableSO->entry << frg::endlog;
-	return executableSO->entry;
-}
+				<< resolvedEntry << frg::endlog;
+	return resolvedEntry;
+	}
 
 const char *lastError;
 
