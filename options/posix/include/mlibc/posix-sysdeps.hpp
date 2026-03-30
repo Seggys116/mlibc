@@ -74,6 +74,7 @@ int sys_close(int fd);
 [[gnu::weak]] int sys_readlinkat(int dirfd, const char *path, void *buffer, size_t max_size, ssize_t *length);
 [[gnu::weak]] int sys_rmdir(const char *path);
 [[gnu::weak]] int sys_ftruncate(int fd, size_t size);
+[[gnu::weak]] int sys_truncate(const char *path, off_t size);
 [[gnu::weak]] int sys_fallocate(int fd, off_t offset, size_t size);
 [[gnu::weak]] int sys_unlinkat(int fd, const char *path, int flags);
 [[gnu::weak]] int sys_openat(int dirfd, const char *path, int flags, mode_t mode, int *fd);
@@ -111,6 +112,7 @@ int sys_close(int fd);
 [[gnu::weak]] int sys_getschedparam(void *tcb, int *policy, struct sched_param *param);
 [[gnu::weak]] int sys_setschedparam(void *tcb, int policy, const struct sched_param *param);
 [[gnu::weak]] int sys_getscheduler(pid_t pid, int *policy);
+[[gnu::weak]] int sys_setscheduler(pid_t pid, int policy, const struct sched_param *param);
 [[gnu::weak]] int sys_getparam(pid_t pid, struct sched_param *param);
 [[gnu::weak]] int sys_setparam(pid_t pid, const struct sched_param *param);
 [[gnu::weak]] int sys_get_max_priority(int policy, int *out);
@@ -147,7 +149,7 @@ int sys_close(int fd);
 // mlibc assumes that anonymous memory returned by sys_vm_map() is zeroed by the kernel / whatever is behind the sysdeps
 int sys_vm_map(void *hint, size_t size, int prot, int flags, int fd, off_t offset, void **window);
 
-[[gnu::weak]] int sys_vm_remap(void *pointer, size_t size, size_t new_size, void **window);
+[[gnu::weak]] int sys_vm_remap(void *pointer, size_t size, size_t new_size, int flags, void **window);
 [[gnu::weak]] int sys_vm_protect(void *pointer, size_t size, int prot);
 
 int sys_vm_unmap(void *pointer, size_t size);

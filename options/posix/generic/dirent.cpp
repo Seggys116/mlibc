@@ -71,8 +71,10 @@ struct dirent *readdir(DIR *dir) {
 	__ensure(dir->__ent_next <= dir->__ent_limit);
 	if(dir->__ent_next == dir->__ent_limit) {
 		MLIBC_CHECK_OR_ENOSYS(mlibc::sys_read_entries, nullptr);
-		if(int e = mlibc::sys_read_entries(dir->__handle, dir->__ent_buffer, 2048, &dir->__ent_limit); e)
-			__ensure(!"mlibc::sys_read_entries() failed");
+		if(int e = mlibc::sys_read_entries(dir->__handle, dir->__ent_buffer, 2048, &dir->__ent_limit); e) {
+			errno = e;
+			return nullptr;
+		}
 		dir->__ent_next = 0;
 		if(!dir->__ent_limit)
 			return nullptr;
@@ -112,8 +114,10 @@ int readdir_r(DIR *dir, struct dirent *entry, struct dirent **result) {
 
 	__ensure(dir->__ent_next <= dir->__ent_limit);
 	if(dir->__ent_next == dir->__ent_limit) {
-		if(int e = mlibc::sys_read_entries(dir->__handle, dir->__ent_buffer, 2048, &dir->__ent_limit); e)
-			__ensure(!"mlibc::sys_read_entries() failed");
+		if(int e = mlibc::sys_read_entries(dir->__handle, dir->__ent_buffer, 2048, &dir->__ent_limit); e) {
+			*result = nullptr;
+			return e;
+		}
 		dir->__ent_next = 0;
 		if(!dir->__ent_limit) {
 			*result = nullptr;

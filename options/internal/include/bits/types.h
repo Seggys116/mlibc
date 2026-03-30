@@ -368,7 +368,10 @@ typedef __SIZE_TYPE__    __mlibc_size;
 /* Sanity checking. Make sure that we agree with the compiler's ABI. */
 /* ---------------------------------------------------------------------------- */
 
-#if defined(__cplusplus) && defined(__cpp_static_assert) && __cpp_static_assert >= 200410L
+#if defined(__GI_SCANNER__)
+/* g-ir-scanner's parser cannot handle our static-assert expansion in headers. */
+#	define __MLIBC_STATIC_ASSERT(c, text)
+#elif defined(__cplusplus) && defined(__cpp_static_assert) && __cpp_static_assert >= 200410L
 #	define __MLIBC_STATIC_ASSERT(c, text) static_assert(c, text)
 #elif !defined(__cplusplus)
 /* _Static_assert is an extension in C89/C99. */

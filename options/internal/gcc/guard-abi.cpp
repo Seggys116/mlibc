@@ -2,30 +2,57 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
+#include <errno.h>
 
 #include <mlibc/debug.hpp>
 #include <mlibc/internal-sysdeps.hpp>
+#include <mlibc/tid.hpp>
 
 namespace {
 
 // Itanium ABI static initialization guard.
 struct Guard {
-	// bit of the mutex member variable.
-	// indicates that the mutex is locked.
-	static constexpr int32_t locked = 1;
+	void lock(void *caller) {
+		uint32_t self_tid = mlibc::this_tid();
+		if(!self_tid)
+			self_tid = 1;
 
-	void lock() {
-		uint32_t v = 0;
-		if(__atomic_compare_exchange_n(&mutex, &v, Guard::locked, false,
-				__ATOMIC_ACQUIRE, __ATOMIC_RELAXED))
-			return;
+		while(true) {
+			uint32_t v = 0;
+			if(__atomic_compare_exchange_n(&mutex, &v, self_tid, false,
+						__ATOMIC_ACQUIRE, __ATOMIC_RELAXED))
+				return;
 
-		mlibc::sys_libc_log("__cxa_guard_acquire contention");
-		__builtin_trap();
+			// Same-thread recursive guard acquisition is a hard error and would
+			// otherwise deadlock forever in futex_wait().
+			if(v == self_tid) {
+				mlibc::infoLogger() << "mlibc: __cxa_guard_acquire recursive initialization"
+						<< " guard=" << reinterpret_cast<void *>(this)
+						<< " caller=" << caller
+						<< " complete=" << static_cast<int>(complete)
+						<< " owner_tid=" << v
+						<< frg::endlog;
+				__builtin_trap();
+			}
+
+			// Another thread holds this guard lock; wait for release.
+			int e = mlibc::sys_futex_wait(reinterpret_cast<int *>(&mutex), static_cast<int>(v), nullptr);
+			if(e && e != EINTR && e != EAGAIN) {
+				mlibc::panicLogger() << "mlibc: __cxa_guard_acquire futex wait failed with error "
+						<< e << frg::endlog;
+				__builtin_trap();
+			}
+		}
 	}
 
 	void unlock() {
 		__atomic_store_n(&mutex, 0, __ATOMIC_RELEASE);
+		int e = mlibc::sys_futex_wake(reinterpret_cast<int *>(&mutex));
+		if(e) {
+			mlibc::panicLogger() << "mlibc: __cxa_guard_release futex wake failed with error "
+					<< e << frg::endlog;
+			__builtin_trap();
+		}
 	}
 
 	// the first byte's meaning is fixed by the ABI.
@@ -49,7 +76,7 @@ extern "C" [[ gnu::visibility("hidden") ]] void __cxa_pure_virtual() {
 
 extern "C" [[ gnu::visibility("hidden") ]] int __cxa_guard_acquire(int64_t *ptr) {
 	auto guard = reinterpret_cast<Guard *>(ptr);
-	guard->lock();
+	guard->lock(__builtin_return_address(0));
 	// relaxed ordering is sufficient because
 	// Guard::complete is only modified while the mutex is held.
 	if(__atomic_load_n(&guard->complete, __ATOMIC_RELAXED)) {
@@ -68,3 +95,8 @@ extern "C" [[ gnu::visibility("hidden") ]] void __cxa_guard_release(int64_t *ptr
 	guard->unlock();
 }
 
+extern "C" [[ gnu::visibility("hidden") ]] void __cxa_guard_abort(int64_t *ptr) {
+	auto guard = reinterpret_cast<Guard *>(ptr);
+	__atomic_store_n(&guard->complete, 0, __ATOMIC_RELAXED);
+	guard->unlock();
+}

@@ -226,6 +226,27 @@ typedef enum __ns_rcode {
 #define NOTIMP      ns_r_notimpl
 #define REFUSED     ns_r_refused
 
+/* Byte-manipulation macros for reading DNS wire-format data.
+ * These are provided by glibc's nameser_compat.h but mlibc needs them here. */
+#define NS_INT16SZ  2
+#define NS_INT32SZ  4
+
+#define NS_GET16(s, cp) do { \
+	const unsigned char *_ns_cp = (const unsigned char *)(cp); \
+	(s) = (uint16_t)(((uint16_t)_ns_cp[0] << 8) | (uint16_t)_ns_cp[1]); \
+	(cp) += NS_INT16SZ; \
+} while (0)
+
+#define NS_GET32(l, cp) do { \
+	const unsigned char *_ns_cp = (const unsigned char *)(cp); \
+	(l) = (uint32_t)(((uint32_t)_ns_cp[0] << 24) | ((uint32_t)_ns_cp[1] << 16) \
+	      | ((uint32_t)_ns_cp[2] << 8) | (uint32_t)_ns_cp[3]); \
+	(cp) += NS_INT32SZ; \
+} while (0)
+
+#define GETSHORT NS_GET16
+#define GETLONG  NS_GET32
+
 #ifndef __MLIBC_ABI_ONLY
 
 /* Parse a DNS message */

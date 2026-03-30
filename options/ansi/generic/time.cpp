@@ -111,10 +111,67 @@ size_t strftime(char *__restrict dest, size_t max_size,
 	return mlibc::strftime(dest, max_size, format, tm, mlibc::getActiveLocale());
 }
 
-size_t wcsftime(wchar_t *__restrict, size_t, const wchar_t *__restrict,
-		const struct tm *__restrict) {
-	mlibc::infoLogger() << "mlibc: wcsftime is a stub" << frg::endlog;
-	return 0;
+size_t wcsftime(wchar_t *__restrict dest, size_t max_size,
+		const wchar_t *__restrict format, const struct tm *__restrict tm) {
+	if(!dest || !format || !tm || !max_size)
+		return 0;
+
+	size_t format_len = wcslen(format);
+	char *format_mb = reinterpret_cast<char *>(malloc(format_len + 1));
+	if(!format_mb)
+		return 0;
+
+	for(size_t i = 0; i < format_len; i++) {
+		wchar_t wc = format[i];
+		// Conservative implementation: accept ASCII format strings only.
+		if(wc < 0 || wc > 0x7F) {
+			dest[0] = L'\0';
+			free(format_mb);
+			errno = EILSEQ;
+			return 0;
+		}
+		format_mb[i] = static_cast<char>(wc);
+	}
+	format_mb[format_len] = '\0';
+
+	if(max_size > (static_cast<size_t>(-1) / MB_LEN_MAX)) {
+		dest[0] = L'\0';
+		free(format_mb);
+		return 0;
+	}
+
+	size_t tmp_capacity = max_size * MB_LEN_MAX;
+	if(tmp_capacity == 0)
+		tmp_capacity = 1;
+	char *tmp = reinterpret_cast<char *>(malloc(tmp_capacity));
+	if(!tmp) {
+		dest[0] = L'\0';
+		free(format_mb);
+		return 0;
+	}
+
+	size_t bytes = mlibc::strftime(tmp, tmp_capacity, format_mb, tm, mlibc::getActiveLocale());
+	free(format_mb);
+	if(!bytes) {
+		dest[0] = L'\0';
+		free(tmp);
+		return 0;
+	}
+
+	// Conservative widening: byte-wise promotion to wchar_t.
+	// If the locale emits multibyte sequences, this is lossy but still avoids
+	// the previous hard stub behavior.
+	if(bytes >= max_size) {
+		dest[0] = L'\0';
+		free(tmp);
+		return 0;
+	}
+
+	for(size_t i = 0; i < bytes; i++)
+		dest[i] = static_cast<unsigned char>(tmp[i]);
+	dest[bytes] = L'\0';
+	free(tmp);
+	return bytes;
 }
 
 namespace {

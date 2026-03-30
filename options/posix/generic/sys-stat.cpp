@@ -1,6 +1,6 @@
 
-#include <errno.h>
 #include <bits/ensure.h>
+#include <errno.h>
 #include <sys/stat.h>
 
 #include <mlibc-config.h>
@@ -9,7 +9,7 @@
 
 int chmod(const char *pathname, mode_t mode) {
 	MLIBC_CHECK_OR_ENOSYS(mlibc::sys_chmod, -1);
-	if(int e = mlibc::sys_chmod(pathname, mode); e) {
+	if (int e = mlibc::sys_chmod(pathname, mode); e) {
 		errno = e;
 		return -1;
 	}
@@ -18,7 +18,7 @@ int chmod(const char *pathname, mode_t mode) {
 
 int fchmod(int fd, mode_t mode) {
 	MLIBC_CHECK_OR_ENOSYS(mlibc::sys_fchmod, -1);
-	if(int e = mlibc::sys_fchmod(fd, mode); e) {
+	if (int e = mlibc::sys_fchmod(fd, mode); e) {
 		errno = e;
 		return -1;
 	}
@@ -27,7 +27,7 @@ int fchmod(int fd, mode_t mode) {
 
 int fchmodat(int dirfd, const char *pathname, mode_t mode, int flags) {
 	MLIBC_CHECK_OR_ENOSYS(mlibc::sys_fchmodat, -1);
-	if(int e = mlibc::sys_fchmodat(dirfd, pathname, mode, flags); e) {
+	if (int e = mlibc::sys_fchmodat(dirfd, pathname, mode, flags); e) {
 		errno = e;
 		return -1;
 	}
@@ -36,7 +36,7 @@ int fchmodat(int dirfd, const char *pathname, mode_t mode, int flags) {
 
 int fstatat(int dirfd, const char *path, struct stat *result, int flags) {
 	MLIBC_CHECK_OR_ENOSYS(mlibc::sys_stat, -1);
-	if(int e = mlibc::sys_stat(mlibc::fsfd_target::fd_path, dirfd, path, flags, result); e) {
+	if (int e = mlibc::sys_stat(mlibc::fsfd_target::fd_path, dirfd, path, flags, result); e) {
 		errno = e;
 		return -1;
 	}
@@ -56,7 +56,7 @@ int futimens(int fd, const struct timespec times[2]) {
 
 int mkdir(const char *path, mode_t mode) {
 	MLIBC_CHECK_OR_ENOSYS(mlibc::sys_mkdir, -1);
-	if(int e = mlibc::sys_mkdir(path, mode); e) {
+	if (int e = mlibc::sys_mkdir(path, mode); e) {
 		errno = e;
 		return -1;
 	}
@@ -65,16 +65,14 @@ int mkdir(const char *path, mode_t mode) {
 
 int mkdirat(int dirfd, const char *path, mode_t mode) {
 	MLIBC_CHECK_OR_ENOSYS(mlibc::sys_mkdirat, -1);
-	if(int e = mlibc::sys_mkdirat(dirfd, path, mode); e) {
+	if (int e = mlibc::sys_mkdirat(dirfd, path, mode); e) {
 		errno = e;
 		return -1;
 	}
 	return 0;
 }
 
-int mkfifo(const char *path, mode_t mode) {
-	return mkfifoat(AT_FDCWD, path, mode);
-}
+int mkfifo(const char *path, mode_t mode) { return mkfifoat(AT_FDCWD, path, mode); }
 
 int mkfifoat(int dirfd, const char *path, mode_t mode) {
 	MLIBC_CHECK_OR_ENOSYS(mlibc::sys_mkfifoat, -1);
@@ -86,9 +84,7 @@ int mkfifoat(int dirfd, const char *path, mode_t mode) {
 	return 0;
 }
 
-int mknod(const char *path, mode_t mode, dev_t dev) {
-	return mknodat(AT_FDCWD, path, mode, dev);
-}
+int mknod(const char *path, mode_t mode, dev_t dev) { return mknodat(AT_FDCWD, path, mode, dev); }
 
 int mknodat(int dirfd, const char *path, mode_t mode, dev_t dev) {
 	MLIBC_CHECK_OR_ENOSYS(mlibc::sys_mknodat, -1);
@@ -111,7 +107,7 @@ mode_t umask(mode_t mode) {
 }
 
 int utimensat(int dirfd, const char *pathname, const struct timespec times[2], int flags) {
-	if(pathname == nullptr) {
+	if (pathname == nullptr) {
 		errno = EINVAL;
 		return -1;
 	}
@@ -127,7 +123,7 @@ int utimensat(int dirfd, const char *pathname, const struct timespec times[2], i
 
 int stat(const char *path, struct stat *result) {
 	MLIBC_CHECK_OR_ENOSYS(mlibc::sys_stat, -1);
-	if(int e = mlibc::sys_stat(mlibc::fsfd_target::path, -1, path, 0, result); e) {
+	if (int e = mlibc::sys_stat(mlibc::fsfd_target::path, -1, path, 0, result); e) {
 		errno = e;
 		return -1;
 	}
@@ -140,8 +136,8 @@ int stat(const char *path, struct stat *result) {
 
 int lstat(const char *path, struct stat *result) {
 	MLIBC_CHECK_OR_ENOSYS(mlibc::sys_stat, -1);
-	if(int e = mlibc::sys_stat(mlibc::fsfd_target::path,
-			-1, path, AT_SYMLINK_NOFOLLOW, result); e) {
+	if (int e = mlibc::sys_stat(mlibc::fsfd_target::path, -1, path, AT_SYMLINK_NOFOLLOW, result);
+	    e) {
 		errno = e;
 		return -1;
 	}
@@ -154,7 +150,7 @@ int lstat(const char *path, struct stat *result) {
 
 int fstat(int fd, struct stat *result) {
 	MLIBC_CHECK_OR_ENOSYS(mlibc::sys_stat, -1);
-	if(int e = mlibc::sys_stat(mlibc::fsfd_target::fd, fd, "", 0, result); e) {
+	if (int e = mlibc::sys_stat(mlibc::fsfd_target::fd, fd, "", 0, result); e) {
 		errno = e;
 		return -1;
 	}
@@ -164,3 +160,10 @@ int fstat(int fd, struct stat *result) {
 #if __MLIBC_LINUX_OPTION
 [[gnu::alias("fstat")]] int fstat64(int fd, struct stat64 *result);
 #endif /* !__MLIBC_LINUX_OPTION */
+
+#if __MLIBC_LINUX_OPTION
+extern "C" __attribute__((visibility("default"))) int
+fstatat64(int dirfd, const char *path, struct stat64 *result, int flags) {
+	return fstatat(dirfd, path, reinterpret_cast<struct stat *>(result), flags);
+}
+#endif

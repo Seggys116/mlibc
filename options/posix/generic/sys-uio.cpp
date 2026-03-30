@@ -69,12 +69,70 @@ ssize_t writev(int fd, const struct iovec *iovs, int iovc) {
 	return written;
 }
 
-ssize_t preadv(int, const struct iovec *, int, off_t) {
-	__ensure(!"Not implemented");
-	__builtin_unreachable();
+ssize_t preadv(int fd, const struct iovec *iovs, int iovc, off_t offset) {
+	if(iovc < 0) {
+		errno = EINVAL;
+		return -1;
+	}
+	if(iovc == 0)
+		return 0;
+
+	ssize_t total_read = 0;
+	off_t current = offset;
+
+	for(int i = 0; i < iovc; i++) {
+		const auto base = reinterpret_cast<char *>(iovs[i].iov_base);
+		size_t len = iovs[i].iov_len;
+		if(!len)
+			continue;
+
+		ssize_t r = pread(fd, base, len, current);
+		if(r < 0) {
+			return total_read > 0 ? total_read : -1;
+		}
+		if(r == 0) {
+			return total_read; // EOF
+		}
+
+		total_read += r;
+		current += r;
+		if(static_cast<size_t>(r) < len)
+			return total_read; // short read
+	}
+
+	return total_read;
 }
 
-ssize_t pwritev(int, const struct iovec *, int, off_t) {
-	__ensure(!"Not implemented");
-	__builtin_unreachable();
+ssize_t pwritev(int fd, const struct iovec *iovs, int iovc, off_t offset) {
+	if(iovc < 0) {
+		errno = EINVAL;
+		return -1;
+	}
+	if(iovc == 0)
+		return 0;
+
+	ssize_t total_written = 0;
+	off_t current = offset;
+
+	for(int i = 0; i < iovc; i++) {
+		const auto base = reinterpret_cast<const char *>(iovs[i].iov_base);
+		size_t len = iovs[i].iov_len;
+		if(!len)
+			continue;
+
+		ssize_t w = pwrite(fd, base, len, current);
+		if(w < 0) {
+			return total_written > 0 ? total_written : -1;
+		}
+		if(w == 0) {
+			return total_written;
+		}
+
+		total_written += w;
+		current += w;
+		if(static_cast<size_t>(w) < len)
+			return total_written; // short write
+	}
+
+	return total_written;
 }

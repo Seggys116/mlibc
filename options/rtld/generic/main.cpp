@@ -45,6 +45,7 @@ mlibc::RtldConfig rtldConfig = {
 
 uintptr_t *entryStack;
 static constinit Tcb earlyTcb{};
+static constinit frg::array<Tcb::LocalKey, PTHREAD_KEYS_MAX> earlyLocalKeys{};
 frg::manual_box<ObjectRepository> initialRepository;
 frg::manual_box<Scope> globalScope;
 
@@ -212,7 +213,12 @@ extern "C" void *lazyRelocate(SharedObject *object, unsigned int rel_index) {
 	__ensure(ELF_CLASS == ELFCLASS64);
 
 	auto [sym, ver] = object->getSymbolByIndex(symbol_index);
-	auto p = Scope::resolveGlobalOrLocal(*globalScope, object->localScope, sym.getString(), object->objectRts, 0, ver);
+	auto p = object->symbolicResolution ? resolveInObject(object, sym.getString(), ver)
+		: frg::optional<ObjectSymbol>{};
+	if(!p) {
+		p = Scope::resolveGlobalOrLocal(*globalScope, object->localScope,
+				sym.getString(), object->objectRts, 0, ver);
+	}
 	if(!p)
 		mlibc::panicLogger() << "Unresolved JUMP_SLOT symbol" << frg::endlog;
 
@@ -278,8 +284,8 @@ static frg::vector<frg::string_view, MemoryAllocator> parseList(frg::string_view
 }
 
 #ifndef MLIBC_STATIC_BUILD
-static constexpr uint64_t supportedDtFlags = DF_BIND_NOW;
-static constexpr uint64_t supportedDtFlags1 = DF_1_NOW;
+static constexpr uint64_t supportedDtFlags = DF_BIND_NOW | DF_ORIGIN;
+static constexpr uint64_t supportedDtFlags1 = DF_1_NOW | DF_1_ORIGIN | DF_1_NODELETE | DF_1_PIE;
 #endif
 
 extern "C" void *interpreterMain(uintptr_t *entry_stack) {
@@ -290,6 +296,9 @@ extern "C" void *interpreterMain(uintptr_t *entry_stack) {
 	// Set up an early TCB such that we can cache our own TID.
 	// The TID is needed to use futexes, so this caching saves a lot of syscalls.
 	earlyTcb.selfPointer = &earlyTcb;
+	earlyTcb.localKeys = &earlyLocalKeys;
+	earlyTcb.dtvPointers = nullptr;
+	earlyTcb.dtvSize = 0;
 	earlyTcb.tid = mlibc::this_tid();
 	if(mlibc::sys_tcb_set(&earlyTcb))
 		__ensure(!"sys_tcb_set() failed");

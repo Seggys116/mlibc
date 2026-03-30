@@ -1,5 +1,6 @@
 #include <semaphore.h>
 #include <errno.h>
+#include <time.h>
 
 #include <bits/ensure.h>
 #include <mlibc/debug.hpp>
@@ -31,51 +32,104 @@ int sem_destroy(sem_t *) {
 }
 
 int sem_wait(sem_t *sem) {
-	unsigned int state = 0;
-
 	while (1) {
-		if (!(state & semaphoreCountMask)) {
-			if (__atomic_compare_exchange_n(&sem->__mlibc_count, &state, semaphoreHasWaiters,
-						false, __ATOMIC_ACQUIRE, __ATOMIC_ACQUIRE)) {
-				int e = mlibc::sys_futex_wait((int *)&sem->__mlibc_count, state, nullptr);
-				if (e == 0 || e == EAGAIN) {
-					continue;
-				} else if (e == EINTR) {
-					errno = EINTR;
-					return -1;
-				} else {
-					mlibc::panicLogger() << "sys_futex_wait() failed with error code " << e << frg::endlog;
-				}
-			}
-		} else {
-			unsigned int desired = (state - 1);
+		unsigned int state = __atomic_load_n(&sem->__mlibc_count, __ATOMIC_ACQUIRE);
+		unsigned int count = state & semaphoreCountMask;
+
+		if (count) {
+			unsigned int desired = (state & semaphoreHasWaiters) | (count - 1);
 			if (__atomic_compare_exchange_n(&sem->__mlibc_count, &state, desired, false,
-						__ATOMIC_RELAXED, __ATOMIC_RELAXED))
+						__ATOMIC_ACQUIRE, __ATOMIC_RELAXED))
 				return 0;
+			continue;
+		}
+
+		unsigned int wait_state = state | semaphoreHasWaiters;
+		if (!__atomic_compare_exchange_n(&sem->__mlibc_count, &state, wait_state,
+					false, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED))
+			continue;
+
+		int e = mlibc::sys_futex_wait((int *)&sem->__mlibc_count, wait_state, nullptr);
+		if (e == 0 || e == EAGAIN) {
+			continue;
+		} else if (e == EINTR) {
+			errno = EINTR;
+			return -1;
+		} else {
+			mlibc::panicLogger() << "sys_futex_wait() failed with error code " << e << frg::endlog;
 		}
 	}
 }
 
-int sem_timedwait(sem_t *sem, const struct timespec *) {
-	mlibc::infoLogger() << "\e[31mmlibc: sem_timedwait is implemented as sem_wait\e[0m" << frg::endlog;
-	return sem_wait(sem);
+int sem_timedwait(sem_t *sem, const struct timespec *abs_timeout) {
+	while (1) {
+		unsigned int state = __atomic_load_n(&sem->__mlibc_count, __ATOMIC_ACQUIRE);
+		unsigned int count = state & semaphoreCountMask;
+
+		if (count) {
+			// Count > 0: try to decrement
+			unsigned int desired = (state & semaphoreHasWaiters) | (count - 1);
+			if (__atomic_compare_exchange_n(&sem->__mlibc_count, &state, desired, false,
+						__ATOMIC_ACQUIRE, __ATOMIC_RELAXED))
+				return 0;
+			continue; // CAS failed, reload state and retry
+		}
+
+		// Count is 0: compute relative timeout from absolute CLOCK_REALTIME deadline
+		struct timespec now;
+		clock_gettime(CLOCK_REALTIME, &now);
+
+		struct timespec rel;
+		rel.tv_sec  = abs_timeout->tv_sec  - now.tv_sec;
+		rel.tv_nsec = abs_timeout->tv_nsec - now.tv_nsec;
+		if (rel.tv_nsec < 0) {
+			rel.tv_sec--;
+			rel.tv_nsec += 1000000000L;
+		}
+		if (rel.tv_sec < 0 || (rel.tv_sec == 0 && rel.tv_nsec <= 0)) {
+			errno = ETIMEDOUT;
+			return -1;
+		}
+
+		// Set hasWaiters flag so sem_post knows to call futex_wake.
+		unsigned int wait_state = state | semaphoreHasWaiters;
+		if (!__atomic_compare_exchange_n(&sem->__mlibc_count, &state, wait_state,
+					false, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED))
+			continue;
+
+		int e = mlibc::sys_futex_wait((int *)&sem->__mlibc_count, wait_state, &rel);
+		if (e == ETIMEDOUT) {
+			errno = ETIMEDOUT;
+			return -1;
+		}
+		if (e == 0 || e == EAGAIN || e == EINTR)
+			continue;
+
+		mlibc::panicLogger() << "sys_futex_wait() failed with error code " << e << frg::endlog;
+	}
 }
 
 int sem_post(sem_t *sem) {
-	auto old_count = __atomic_load_n(&sem->__mlibc_count, __ATOMIC_RELAXED) & semaphoreCountMask;
+	while (1) {
+		// Keep waiter-bit state intact while incrementing count.
+		unsigned int state = __atomic_load_n(&sem->__mlibc_count, __ATOMIC_RELAXED);
+		unsigned int count = state & semaphoreCountMask;
+		if (count + 1 > SEM_VALUE_MAX) {
+			errno = EOVERFLOW;
+			return -1;
+		}
 
-	if (old_count + 1 > SEM_VALUE_MAX) {
-		errno = EOVERFLOW;
-		return -1;
+		unsigned int desired = (state & semaphoreHasWaiters) | (count + 1);
+		if (!__atomic_compare_exchange_n(&sem->__mlibc_count, &state, desired,
+					false, __ATOMIC_RELEASE, __ATOMIC_RELAXED))
+			continue;
+
+		if (state & semaphoreHasWaiters)
+			if (int e = mlibc::sys_futex_wake((int *)&sem->__mlibc_count); e)
+				__ensure(!"sys_futex_wake() failed");
+
+		return 0;
 	}
-
-	auto state = __atomic_exchange_n(&sem->__mlibc_count, old_count + 1, __ATOMIC_RELEASE);
-
-	if (state & semaphoreHasWaiters)
-		if (int e = mlibc::sys_futex_wake((int *)&sem->__mlibc_count); e)
-			__ensure(!"sys_futex_wake() failed");
-
-	return 0;
 }
 
 sem_t *sem_open(const char *, int, ...) {
@@ -88,9 +142,10 @@ int sem_close(sem_t *) {
 	__builtin_unreachable();
 }
 
-int sem_getvalue(sem_t *, int *) {
-	__ensure(!"Not implemented");
-	__builtin_unreachable();
+int sem_getvalue(sem_t *sem, int *sval) {
+	auto count = __atomic_load_n(&sem->__mlibc_count, __ATOMIC_RELAXED) & semaphoreCountMask;
+	*sval = static_cast<int>(count);
+	return 0;
 }
 
 int sem_unlink(const char *) {
@@ -101,13 +156,14 @@ int sem_unlink(const char *) {
 int sem_trywait(sem_t *sem) {
 	while (true) {
 		auto state = __atomic_load_n(&sem->__mlibc_count, __ATOMIC_ACQUIRE);
+		auto count = state & semaphoreCountMask;
 
-		if ((state & semaphoreHasWaiters) || !state) {
+		if (!count) {
 			errno = EAGAIN;
 			return -1;
 		}
 
-		auto desired = state - 1;
+		auto desired = (state & semaphoreHasWaiters) | (count - 1);
 		if (__atomic_compare_exchange_n(&sem->__mlibc_count, &state, desired, false, __ATOMIC_RELEASE, __ATOMIC_RELAXED)) {
 			return 0;
 		}

@@ -657,21 +657,39 @@ frg::expected<LinkerError, void> ObjectRepository::_fetchFromFile(SharedObject *
 			if(phdr->p_flags & PF_X)
 				prot |= PROT_EXEC;
 
-		#if MLIBC_MAP_DSO_SEGMENTS
-			// we can avoid the vm_protect call if we don't have to write to the segment
-			if(phdr->p_memsz == phdr->p_filesz)
-				initial_prot = prot;
+				#if MLIBC_MAP_DSO_SEGMENTS
+					// we can avoid the vm_protect call if we don't have to write to the segment
+					if(phdr->p_memsz == phdr->p_filesz)
+						initial_prot = prot;
 
-			void *map_pointer;
-			if(mlibc::sys_vm_map(reinterpret_cast<void *>(map_address),
-					backed_map_size, initial_prot,
-					MAP_PRIVATE | MAP_FIXED, fd, phdr->p_offset - misalign, &map_pointer))
-				__ensure(!"sys_vm_map failed");
-			if(total_map_size > backed_map_size)
-				if(mlibc::sys_vm_map(reinterpret_cast<void *>(map_address + backed_map_size),
-						total_map_size - backed_map_size, initial_prot,
-						MAP_PRIVATE | MAP_FIXED | MAP_ANONYMOUS, -1, 0, &map_pointer))
-					__ensure(!"sys_vm_map failed");
+					void *map_pointer;
+					auto map_error = mlibc::sys_vm_map(reinterpret_cast<void *>(map_address),
+							backed_map_size, initial_prot,
+							MAP_PRIVATE | MAP_FIXED, fd, phdr->p_offset - misalign, &map_pointer);
+					if(map_error) {
+						mlibc::infoLogger() << "rtld: PT_LOAD map failed for \"" << object->name << "\""
+								<< " errno=" << map_error
+								<< " va=" << (void *)map_address
+								<< " size=" << backed_map_size
+								<< " file_off=0x" << frg::hex_fmt{static_cast<uintptr_t>(phdr->p_offset - misalign)}
+								<< " prot=0x" << frg::hex_fmt{static_cast<uintptr_t>(initial_prot)}
+								<< frg::endlog;
+						__ensure(!"sys_vm_map failed");
+					}
+					if(total_map_size > backed_map_size) {
+						auto tail_map_error = mlibc::sys_vm_map(reinterpret_cast<void *>(map_address + backed_map_size),
+								total_map_size - backed_map_size, initial_prot,
+								MAP_PRIVATE | MAP_FIXED | MAP_ANONYMOUS, -1, 0, &map_pointer);
+						if(tail_map_error) {
+							mlibc::infoLogger() << "rtld: PT_LOAD BSS tail map failed for \"" << object->name << "\""
+									<< " errno=" << tail_map_error
+									<< " va=" << (void *)(map_address + backed_map_size)
+									<< " size=" << (total_map_size - backed_map_size)
+									<< " prot=0x" << frg::hex_fmt{static_cast<uintptr_t>(initial_prot)}
+									<< frg::endlog;
+							__ensure(!"sys_vm_map failed");
+						}
+					}
 
 			if(mlibc::sys_vm_readahead)
 				if(mlibc::sys_vm_readahead(reinterpret_cast<void *>(map_address),
@@ -795,6 +813,8 @@ void ObjectRepository::_parseDynamic(SharedObject *object) {
 			object->eagerBinding = true;
 			break;
 		case DT_FLAGS: {
+			// DF_ORIGIN is informational for objects that may use $ORIGIN in
+			// search paths and does not require dedicated runtime handling here.
 			if(dynamic->d_un.d_val & DF_SYMBOLIC)
 				object->symbolicResolution = true;
 			if(dynamic->d_un.d_val & DF_STATIC_TLS)
@@ -802,7 +822,7 @@ void ObjectRepository::_parseDynamic(SharedObject *object) {
 			if(dynamic->d_un.d_val & DF_BIND_NOW)
 				object->eagerBinding = true;
 
-			auto ignored = DF_BIND_NOW | DF_SYMBOLIC | DF_STATIC_TLS;
+			auto ignored = DF_BIND_NOW | DF_SYMBOLIC | DF_STATIC_TLS | DF_ORIGIN;
 #ifdef __riscv
 			// Work around https://sourceware.org/bugzilla/show_bug.cgi?id=24673.
 			ignored |= DF_TEXTREL;
@@ -821,7 +841,10 @@ void ObjectRepository::_parseDynamic(SharedObject *object) {
 			// The DF_1_PIE flag is informational only. It is used by e.g file(1).
 			// The DF_1_NODELETE flag has a similar effect to RTLD_NODELETE, both of which we
 			// ignore because we don't implement dlclose().
-			if(dynamic->d_un.d_val & ~(DF_1_NOW | DF_1_PIE | DF_1_NODELETE))
+			// Other bits listed below are accepted as informational hints.
+			if(dynamic->d_un.d_val & ~(DF_1_NOW | DF_1_PIE | DF_1_NODELETE
+					| DF_1_GLOBAL | DF_1_GROUP | DF_1_LOADFLTR | DF_1_INITFIRST
+					| DF_1_NOOPEN | DF_1_ORIGIN | DF_1_NODEFLIB))
 				mlibc::infoLogger() << "\e[31mrtld: DT_FLAGS_1(" << frg::hex_fmt{dynamic->d_un.d_val}
 						<< ") is not implemented correctly!\e[39m"
 						<< frg::endlog;
@@ -925,6 +948,7 @@ void ObjectRepository::_parseDynamic(SharedObject *object) {
 		object->soName = reinterpret_cast<const char *>(object->baseAddress
 				+ object->stringTableOffset + *soname_offset);
 	}
+
 }
 
 void ObjectRepository::_parseVerdef(SharedObject *object) {
@@ -1422,7 +1446,9 @@ Tcb *allocateTcb() {
 				<< ", size = 0x" << frg::hex_fmt{tlsInitialSize} << frg::endlog;
 	}
 
-	Tcb *tcb_ptr = new ((char *)tcbAddress) Tcb;
+	// Value-initialize the TCB so scalar fields (tid, pointers, counters, etc.)
+	// start from deterministic zero state for new threads.
+	Tcb *tcb_ptr = new ((char *)tcbAddress) Tcb{};
 	tcb_ptr->selfPointer = tcb_ptr;
 
 	tcb_ptr->stackCanary = __stack_chk_guard;
@@ -1615,6 +1641,13 @@ frg::optional<ObjectSymbol> resolveInObject(SharedObject *object, frg::string_vi
 
 		return frg::optional<ObjectSymbol>{};
 	}else{
+		if(object->hashStyle != HashStyle::gnu) {
+			mlibc::panicLogger() << "rtld: unexpected hash style "
+					<< static_cast<int>(object->hashStyle)
+					<< " while resolving '" << string << "' in object '"
+					<< object->name << "' (path='" << object->path << "')"
+					<< frg::endlog;
+		}
 		__ensure(object->hashStyle == HashStyle::gnu);
 
 		auto hash_table = reinterpret_cast<const GnuHashTableHeader *>(object->baseAddress
@@ -1721,7 +1754,6 @@ frg::optional<ObjectSymbol> Scope::resolveSymbol(frg::string_view string,
 		if((flags & skipGlobalAfterRts) && object->globalRts > skipRts) {
 			// globalRts should be monotone increasing for objects in the global scope,
 			// so as an optimization we can break early here.
-			// TODO: If we implement DT_SYMBOLIC, this assumption fails.
 			if(isGlobal)
 				break;
 			else
@@ -1803,11 +1835,6 @@ void Loader::linkObjects(SharedObject *root) {
 			mlibc::infoLogger() << "rtld: Linking " << object->name << frg::endlog;
 
 		__ensure(!object->wasLinked);
-
-		// TODO: Support this.
-		if(object->symbolicResolution)
-			mlibc::infoLogger() << "\e[31mrtld: DT_SYMBOLIC is not implemented correctly!\e[39m"
-					<< frg::endlog;
 
 		_processStaticRelocations(object);
 		_processLazyRelocations(object);
@@ -1997,8 +2024,12 @@ void Loader::_processRelocations(Relocation &rel) {
 	if(rel.symbol_index()) {
 		auto [sym, ver] = rel.object()->getSymbolByIndex(rel.symbol_index());
 
-		p = Scope::resolveGlobalOrLocal(*globalScope, rel.object()->localScope,
-				sym.getString(), rel.object()->objectRts, 0, ver);
+		if(rel.object()->symbolicResolution)
+			p = resolveInObject(rel.object(), sym.getString(), ver);
+		if(!p) {
+			p = Scope::resolveGlobalOrLocal(*globalScope, rel.object()->localScope,
+					sym.getString(), rel.object()->objectRts, 0, ver);
+		}
 		if(!p) {
 			if(ELF_ST_BIND(sym.symbol()->st_info) != STB_WEAK)
 				mlibc::panicLogger() << "Unresolved load-time symbol "
@@ -2235,7 +2266,12 @@ void Loader::_processLazyRelocations(SharedObject *object) {
 		case R_JUMP_SLOT:
 			if(eagerBinding) {
 				auto [sym, ver] = object->getSymbolByIndex(symbol_index);
-				auto p = Scope::resolveGlobalOrLocal(*globalScope, object->localScope, sym.getString(), object->objectRts, 0, ver);
+				auto p = object->symbolicResolution ? resolveInObject(object, sym.getString(), ver)
+					: frg::optional<ObjectSymbol>{};
+				if(!p) {
+					p = Scope::resolveGlobalOrLocal(*globalScope, object->localScope,
+							sym.getString(), object->objectRts, 0, ver);
+				}
 
 				if(!p) {
 					if(ELF_ST_BIND(sym.symbol()->st_info) != STB_WEAK)
@@ -2269,7 +2305,12 @@ void Loader::_processLazyRelocations(SharedObject *object) {
 
 			if (symbol_index) {
 				auto [sym, ver] = object->getSymbolByIndex(symbol_index);
-				auto p = Scope::resolveGlobalOrLocal(*globalScope, object->localScope, sym.getString(), object->objectRts, 0, ver);
+				auto p = object->symbolicResolution ? resolveInObject(object, sym.getString(), ver)
+					: frg::optional<ObjectSymbol>{};
+				if(!p) {
+					p = Scope::resolveGlobalOrLocal(*globalScope, object->localScope,
+							sym.getString(), object->objectRts, 0, ver);
+				}
 
 				if (!p) {
 					__ensure(ELF_ST_BIND(sym.symbol()->st_info) != STB_WEAK);
@@ -2317,4 +2358,3 @@ void Loader::_processLazyRelocations(SharedObject *object) {
 		}
 	}
 }
-

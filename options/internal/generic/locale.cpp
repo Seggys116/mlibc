@@ -593,7 +593,9 @@ void localeinfo::updateLocaleName() {
 // Apply the category for the locale `name` to the localeinfo object.
 // `name` must be a valid, standalone locale name; composites are not supported!
 bool applyCategory(int category, frg::string_view name, localeinfo *info) {
-	if (name == "C" || name == "POSIX") {
+	bool isCUtf8 = (name == "C.UTF-8" || name == "C.utf8"
+			|| name == "POSIX.UTF-8" || name == "POSIX.utf8");
+	if (name == "C" || name == "POSIX" || isCUtf8) {
 		switch (category) {
 			case LC_CTYPE:
 				info->ctype.localeName = frg::string{name, getAllocator()};
@@ -648,6 +650,10 @@ bool applyCategory(int category, frg::string_view name, localeinfo *info) {
 				mlibc::infoLogger() << "mlibc: unhandled defaults for category "
 					<< lcNames[category] << " in C/POSIX locale" << frg::endlog;
 				return false;
+		}
+
+		if (isCUtf8 && category == LC_CTYPE) {
+			info->ctype.members[CODESET & 0xFFFF] = category_item{frg::string_view{"UTF-8"}};
 		}
 
 		return true;

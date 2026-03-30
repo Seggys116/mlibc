@@ -79,6 +79,13 @@ int __fpclassifyl(long double __x);
 /* [C11/7.12.14 Comparison macros] */
 #define isunordered(x,y) (isnan((x)) ? ((void)(y),1) : isnan((y)))
 
+#ifdef __GI_SCANNER__
+#define isless(x, y) ((x) < (y))
+#define islessequal(x, y) ((x) <= (y))
+#define islessgreater(x, y) ((x) != (y))
+#define isgreater(x, y) ((x) > (y))
+#define isgreaterequal(x, y) ((x) >= (y))
+#else
 __MLIBC_INLINE_DEFINITION int __mlibc_isless(double_t __x, double_t __y) { return !isunordered(__x, __y) && __x < __y; }
 __MLIBC_INLINE_DEFINITION int __mlibc_islessf(float_t __x, float_t __y) { return !isunordered(__x, __y) && __x < __y; }
 __MLIBC_INLINE_DEFINITION int __mlibc_islessl(long double __x, long double __y) { return !isunordered(__x, __y) && __x < __y; }
@@ -106,6 +113,7 @@ __MLIBC_INLINE_DEFINITION int __mlibc_isgreaterequall(long double __x, long doub
 #define islessgreater(x, y) __MLIBC_CHOOSE_COMPARISON(x, y, __mlibc_islessgreater)
 #define isgreater(x, y) __MLIBC_CHOOSE_COMPARISON(x, y, __mlibc_isgreater)
 #define isgreaterequal(x, y) __MLIBC_CHOOSE_COMPARISON(x, y, __mlibc_isgreaterequal)
+#endif
 
 #if defined(_GNU_SOURCE)
 void sincos(double __x, double *__sin, double *__cos);
@@ -387,4 +395,3 @@ int finitef(float __x);
 #endif
 
 #endif /* _MATH_H */
-

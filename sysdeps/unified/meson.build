@@ -14,6 +14,7 @@ libc_sources += files(
 	'generic/entry.cpp',
 	'generic/filesystem.cpp',
 	'generic/unified.cpp',
+	'generic/posix-syscall.cpp',
 	'generic/pty.cpp',
 	'generic/signals.cpp',
 	'generic/sockets.cpp',

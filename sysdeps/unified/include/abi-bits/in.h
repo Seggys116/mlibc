@@ -69,9 +69,14 @@ struct ip_mreqn {
 };
 
 struct in_pktinfo {
-	unsigned int ipi_ifindex;
+	int ipi_ifindex;
 	struct in_addr ipi_spec_dst;
 	struct in_addr ipi_addr;
+};
+
+struct group_req {
+	uint32_t gr_interface;
+	struct sockaddr_storage gr_group;
 };
 
 struct group_source_req {
@@ -87,83 +92,120 @@ struct group_source_req {
 #define IN6ADDR_ANY_INIT      { { { 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0 } } }
 #define IN6ADDR_LOOPBACK_INIT { { { 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1 } } }
 
-#define IPPROTO_IP 0
-#define IPPROTO_ICMP 1
-#define IPPROTO_IGMP 2
-#define IPPROTO_TCP 6
-#define IPPROTO_UDP 17
-#define IPPROTO_IPV6 41
-#define IPPROTO_ICMPV6 58
-#define IPPROTO_RAW 255
-#define IPPROTO_ROUTING 43
-#define IPPROTO_GRE 47
-#define IPPROTO_ESP 50
-#define IPPROTO_AH 51
-#define IPPROTO_DSTOPTS 60
-#define IPPROTO_COMP 108
-#define IPPROTO_SCTP 132
-#define IPPROTO_DCCP 33
-#define IPPROTO_UDPLITE 136
-#define IPPROTO_IPIP 4
-#define IPPROTO_MAX 256
+#define IPPROTO_IP       0
+#define IPPROTO_HOPOPTS  0
+#define IPPROTO_ICMP     1
+#define IPPROTO_IGMP     2
+#define IPPROTO_IPIP     4
+#define IPPROTO_TCP      6
+#define IPPROTO_EGP      8
+#define IPPROTO_PUP      12
+#define IPPROTO_UDP      17
+#define IPPROTO_IDP      22
+#define IPPROTO_TP       29
+#define IPPROTO_DCCP     33
+#define IPPROTO_IPV6     41
+#define IPPROTO_ROUTING  43
+#define IPPROTO_FRAGMENT 44
+#define IPPROTO_RSVP     46
+#define IPPROTO_GRE      47
+#define IPPROTO_ESP      50
+#define IPPROTO_AH       51
+#define IPPROTO_ICMPV6   58
+#define IPPROTO_NONE     59
+#define IPPROTO_DSTOPTS  60
+#define IPPROTO_MTP      92
+#define IPPROTO_BEETPH   94
+#define IPPROTO_ENCAP    98
+#define IPPROTO_PIM      103
+#define IPPROTO_COMP     108
+#define IPPROTO_SCTP     132
+#define IPPROTO_MH       135
+#define IPPROTO_UDPLITE  136
+#define IPPROTO_MPLS     137
+#define IPPROTO_RAW      255
+#define IPPROTO_MAX      256
 
-#define INADDR_ANY ((in_addr_t)0x00000000)
-#define INADDR_BROADCAST ((in_addr_t)0xffffffff)
-#define INADDR_LOOPBACK ((in_addr_t)0x7f000001)
-#define INADDR_NONE ((in_addr_t)0xffffffff)
+#define INADDR_ANY        ((in_addr_t) 0x00000000)
+#define INADDR_BROADCAST  ((in_addr_t) 0xffffffff)
+#define INADDR_NONE       ((in_addr_t) 0xffffffff)
+#define INADDR_LOOPBACK   ((in_addr_t) 0x7f000001)
 
-#define INET_ADDRSTRLEN 16
+#define INADDR_UNSPEC_GROUP     ((in_addr_t) 0xe0000000)
+#define INADDR_ALLHOSTS_GROUP   ((in_addr_t) 0xe0000001)
+#define INADDR_ALLRTRS_GROUP    ((in_addr_t) 0xe0000002)
+#define INADDR_ALLSNOOPERS_GROUP ((in_addr_t) 0xe000006a)
+#define INADDR_MAX_LOCAL_GROUP  ((in_addr_t) 0xe00000ff)
 
+#define INET_ADDRSTRLEN  16
 #define INET6_ADDRSTRLEN 46
 
-#define IPV6_JOIN_GROUP 1
-#define IPV6_LEAVE_GROUP 2
-#define IPV6_MULTICAST_HOPS 3
-#define IPV6_MULTICAST_IF 4
-#define IPV6_MULTICAST_LOOP 5
-#define IPV6_UNICAST_HOPS 6
-#define IPV6_V6ONLY 7
-#define IPV6_PMTUDISC_DONT 8
-#define IPV6_PMTUDISC_DO 9
-#define IPV6_MTU 10
-#define IPV6_2292PKTOPTIONS 11
+#define IPPORT_RESERVED 1024
+
+#define IPV6_2292PKTOPTIONS 6
+#define IPV6_2292HOPLIMIT 8
+#define IPV6_UNICAST_HOPS 16
+#define IPV6_MULTICAST_IF 17
+#define IPV6_MULTICAST_HOPS 18
+#define IPV6_MULTICAST_LOOP 19
+#define IPV6_JOIN_GROUP 20
+#define IPV6_LEAVE_GROUP 21
 #define IPV6_MTU_DISCOVER 23
+#define IPV6_MTU 24
 #define IPV6_RECVERR 25
+#define IPV6_V6ONLY 26
 #define IPV6_RECVPKTINFO 49
 #define IPV6_PKTINFO 50
 #define IPV6_RECVHOPLIMIT 51
 #define IPV6_HOPLIMIT 52
+
+#define IPV6_RECVTCLASS	66
 #define IPV6_TCLASS 67
+
+#define IPV6_ADD_MEMBERSHIP IPV6_JOIN_GROUP
+#define IPV6_DROP_MEMBERSHIP IPV6_LEAVE_GROUP
+
+#define IPV6_PMTUDISC_DONT 0
+#define IPV6_PMTUDISC_WANT 1
+#define IPV6_PMTUDISC_DO 2
+#define IPV6_PMTUDISC_PROBE 3
+#define IPV6_PMTUDISC_INTERFACE 4
+#define IPV6_PMTUDISC_OMIT 5
 
 #define IP_TOS 1
 #define IP_TTL 2
+#define IP_HDRINCL 3
 #define IP_OPTIONS 4
-#define IP_PMTUDISC_OMIT 5
+#define IP_RECVOPTS 6
+#define IP_RETOPTS 7
 #define IP_PKTINFO 8
 #define IP_PKTOPTIONS 9
 #define IP_MTU_DISCOVER 10
 #define IP_RECVERR 11
 #define IP_RECVTTL 12
-#define IP_UNICAST_IF 13
 #define IP_MTU 14
-
-#define IP_DEFAULT_MULTICAST_TTL  1
-#define IP_MULTICAST_IF           32
-#define IP_MULTICAST_TTL          33
-#define IP_MULTICAST_LOOP         34
-#define IP_ADD_MEMBERSHIP         35
-#define IP_DROP_MEMBERSHIP        36
-#define IP_UNBLOCK_SOURCE         37
-#define IP_BLOCK_SOURCE           38
-#define IP_ADD_SOURCE_MEMBERSHIP  39
+#define IP_MULTICAST_IF 32
+#define IP_MULTICAST_TTL 33
+#define IP_MULTICAST_LOOP 34
+#define IP_ADD_MEMBERSHIP 35
+#define IP_DROP_MEMBERSHIP 36
+#define IP_UNBLOCK_SOURCE 37
+#define IP_BLOCK_SOURCE 38
+#define IP_ADD_SOURCE_MEMBERSHIP 39
 #define IP_DROP_SOURCE_MEMBERSHIP 40
-#define MCAST_JOIN_SOURCE_GROUP   46
-#define MCAST_LEAVE_SOURCE_GROUP  47
+#define IP_UNICAST_IF 50
 
 #define IP_PMTUDISC_DONT 0
-#define IP_PMTUDISC_DO   2
+#define IP_PMTUDISC_WANT 1
+#define IP_PMTUDISC_DO 2
+#define IP_PMTUDISC_PROBE 3
+#define IP_PMTUDISC_INTERFACE 4
+#define IP_PMTUDISC_OMIT 5
 
-#define IPV6_ADD_MEMBERSHIP  IPV6_JOIN_GROUP
-#define IPV6_DROP_MEMBERSHIP IPV6_LEAVE_GROUP
+#define MCAST_JOIN_GROUP 42
+#define MCAST_BLOCK_SOURCE 43
+#define MCAST_UNBLOCK_SOURCE 44
+#define MCAST_JOIN_SOURCE_GROUP 46
+#define MCAST_LEAVE_SOURCE_GROUP 47
 
 #endif /* _ABIBITS_IN_H */

@@ -14,6 +14,10 @@ struct GlobalConfig {
 	bool debugMonetaryLengths;
 };
 
+// These helpers are safe to call during early libc initialization.
+bool globalConfigIsInitializing();
+bool globalConfigIsReady();
+
 inline const GlobalConfig &globalConfig() {
 	static GlobalConfig cached;
 	return cached;

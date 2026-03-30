@@ -2,13 +2,52 @@
 #include <errno.h>
 #include <limits.h>
 #include <pthread.h>
+#include <stdint.h>
 #include <unistd.h>
 #include <sys/mman.h>
+#include <sys/syscall.h>
 #include <bits/ensure.h>
 
 #include <mlibc-config.h>
 #include <mlibc/debug.hpp>
 #include <mlibc/posix-sysdeps.hpp>
+
+#if __has_include(<unified/syscall.h>)
+#define UNIFIED_NO_SYSCALL_MACRO
+#include <unified/syscall.h>
+#undef UNIFIED_NO_SYSCALL_MACRO
+#define MLIBC_HAS_UNIFIED_MINCORE_FALLBACK 1
+#endif
+
+namespace {
+	static inline bool mincore_fallback_syscall(void *addr, size_t length,
+			unsigned char *vec, int *out_errno) {
+#if defined(SYS_mincore)
+		long ret = _syscall(SYS_mincore, reinterpret_cast<uintptr_t>(addr),
+				length, reinterpret_cast<uintptr_t>(vec));
+#elif defined(SYS_MINCORE)
+		long ret = _syscall(SYS_MINCORE, reinterpret_cast<uintptr_t>(addr),
+				length, reinterpret_cast<uintptr_t>(vec));
+#elif defined(__NR_mincore)
+		long ret = _syscall(__NR_mincore, reinterpret_cast<uintptr_t>(addr),
+				length, reinterpret_cast<uintptr_t>(vec));
+#else
+		(void)addr;
+		(void)length;
+		(void)vec;
+		if(out_errno)
+			*out_errno = ENOSYS;
+		return false;
+#endif
+
+		if(ret < 0) {
+			if(out_errno)
+				*out_errno = static_cast<int>(-ret);
+			return false;
+		}
+		return true;
+	}
+} // namespace
 
 int mprotect(void *pointer, size_t size, int prot) {
 	MLIBC_CHECK_OR_ENOSYS(mlibc::sys_vm_protect, -1);
@@ -135,11 +174,9 @@ int shm_unlink(const char *name) {
 
 #if __MLIBC_LINUX_OPTION
 void *mremap(void *pointer, size_t size, size_t new_size, int flags, ...) {
-	__ensure(flags == MREMAP_MAYMOVE);
-
 	void *window;
 	MLIBC_CHECK_OR_ENOSYS(mlibc::sys_vm_remap, (void *)-1);
-	if(int e = mlibc::sys_vm_remap(pointer, size, new_size, &window); e) {
+	if(int e = mlibc::sys_vm_remap(pointer, size, new_size, flags, &window); e) {
 		errno = e;
 		return (void *)-1;
 	}
@@ -174,7 +211,18 @@ int madvise(void *addr, size_t length, int advice) {
 }
 
 int mincore(void *addr, size_t length, unsigned char *vec) {
-	MLIBC_CHECK_OR_ENOSYS(mlibc::sys_munlockall, -1);
+	if(!mlibc::sys_mincore) {
+		int sys_errno = 0;
+		if(mincore_fallback_syscall(addr, length, vec, &sys_errno))
+			return 0;
+		if(sys_errno != 0) {
+			errno = sys_errno;
+			return -1;
+		}
+		errno = ENOSYS;
+		return -1;
+	}
+
 	if(int e = mlibc::sys_mincore(addr, length, vec); e) {
 		errno = e;
 		return -1;

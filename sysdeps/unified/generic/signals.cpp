@@ -1,8 +1,12 @@
 #include <unified/syscall.h>
 
 #include <sys/types.h>
+#include <signal.h>
+#include <string.h>
+#include <errno.h>
 
 #include <mlibc/ansi-sysdeps.hpp>
+#include <mlibc/posix-sysdeps.hpp>
 
 namespace mlibc{
 
@@ -40,6 +44,43 @@ int sys_sigsuspend(const sigset_t *set) {
     if(ret < 0){
         return -ret;
     }
+    return 0;
+}
+
+int sys_pause() {
+    // Pass nullptr to sigsuspend: the kernel will block with the current mask
+    // unchanged and return -EINTR when any deliverable signal arrives.
+    return sys_sigsuspend(nullptr);
+}
+
+int sys_sigaltstack(const stack_t *ss, stack_t *oss) {
+    int ret = syscall(SYS_SIGALTSTACK, ss, oss);
+    if (ret < 0)
+        return -ret;
+    return 0;
+}
+
+int sys_sigpending(sigset_t *set) {
+    long ret = syscall(SYS_SIGPENDING, (uintptr_t)set);
+    if (ret < 0)
+        return -ret;
+    return 0;
+}
+
+int sys_tgkill(int tgid, int tid, int sig) {
+    long ret = syscall(SYS_TGKILL, tgid, tid, sig);
+    if (ret < 0)
+        return -ret;
+    return 0;
+}
+
+int sys_sigtimedwait(const sigset_t *__restrict set, siginfo_t *__restrict info,
+    const struct timespec *__restrict timeout, int *out_signal) {
+    long ret = syscall(SYS_SIGTIMEDWAIT, (uintptr_t)set, (uintptr_t)info, (uintptr_t)timeout);
+    if (ret < 0)
+        return -ret;
+    // ret is the signal number on success
+    *out_signal = (int)ret;
     return 0;
 }
 

@@ -1,6 +1,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -23,9 +24,15 @@
 #include <mlibc/time-helpers.hpp>
 #include <mlibc/global-config.hpp>
 
+namespace {
+static constexpr int kJoinableBit = 1;
+}
+
 struct ScopeTrace {
 	ScopeTrace(const char *file, int line, const char *function)
 	: _file(file), _line(line), _function(function) {
+		if(mlibc::globalConfigIsInitializing())
+			return;
 		if(!mlibc::globalConfig().debugPthreadTrace)
 			return;
 		mlibc::infoLogger() << "trace: Enter scope "
@@ -34,6 +41,8 @@ struct ScopeTrace {
 	}
 
 	~ScopeTrace() {
+		if(mlibc::globalConfigIsInitializing())
+			return;
 		if(!mlibc::globalConfig().debugPthreadTrace)
 			return;
 		mlibc::infoLogger() << "trace: Exit scope" << frg::endlog;
@@ -57,6 +66,7 @@ static constexpr unsigned int mutex_excl_bit = static_cast<uint32_t>(1) << 30;
 static constexpr unsigned int rc_count_mask = (static_cast<uint32_t>(1) << 31) - 1;
 static constexpr unsigned int rc_waiters_bit = static_cast<uint32_t>(1) << 31;
 
+// Keep pthread_attr_init() aligned with thread_create() defaults.
 static constexpr size_t default_stacksize = 0x200000;
 static constexpr size_t default_guardsize = 4096;
 
@@ -304,8 +314,24 @@ int pthread_getattr_np(pthread_t thread, pthread_attr_t *attr) {
 	}
 
 	attr->__mlibc_guardsize = tcb->guardSize;
-	attr->__mlibc_detachstate = tcb->isJoinable ? PTHREAD_CREATE_JOINABLE : PTHREAD_CREATE_DETACHED;
-	mlibc::infoLogger() << "pthread_getattr_np(): Implementation is incomplete!" << frg::endlog;
+	attr->__mlibc_detachstate = (tcb->isJoinable & kJoinableBit)
+		? PTHREAD_CREATE_JOINABLE : PTHREAD_CREATE_DETACHED;
+
+	// Fill in scheduling policy and priority
+	attr->__mlibc_schedpolicy = SCHED_OTHER;
+	attr->__mlibc_schedparam.__sched_priority = 0;
+	if (mlibc::sys_getschedparam) {
+		int policy;
+		struct sched_param sp;
+		if (mlibc::sys_getschedparam(tcb, &policy, &sp) == 0) {
+			attr->__mlibc_schedpolicy = policy;
+			attr->__mlibc_schedparam.__sched_priority = sp.sched_priority;
+		}
+	}
+
+	attr->__mlibc_inheritsched = PTHREAD_INHERIT_SCHED;
+	attr->__mlibc_scope = PTHREAD_SCOPE_SYSTEM;
+
 	return 0;
 }
 
@@ -794,12 +820,13 @@ int pthread_mutex_init(pthread_mutex_t *__restrict mutex,
 }
 
 int pthread_mutex_destroy(pthread_mutex_t *mutex) {
+	if(!mutex)
+		return 0;
 	return mlibc::thread_mutex_destroy(mutex);
 }
 
 int pthread_mutex_lock(pthread_mutex_t *mutex) {
 	SCOPE_TRACE();
-
 	return mlibc::thread_mutex_lock(mutex);
 }
 
@@ -817,7 +844,6 @@ int pthread_mutex_timedlock(pthread_mutex_t *__restrict mutex,
 int pthread_mutex_clocklock(pthread_mutex_t *__restrict mutex,
 		clockid_t clockid, const struct timespec *__restrict abstime) {
 	SCOPE_TRACE();
-
 	return mlibc::thread_mutex_timedlock(mutex, abstime, clockid);
 }
 
@@ -906,7 +932,7 @@ int pthread_cond_clockwait(pthread_cond_t *__restrict cond, pthread_mutex_t *__r
 int pthread_cond_signal(pthread_cond_t *cond) {
 	SCOPE_TRACE();
 
-	return pthread_cond_broadcast(cond);
+	return mlibc::thread_cond_signal(cond);
 }
 
 int pthread_cond_broadcast(pthread_cond_t *cond) {
@@ -961,8 +987,7 @@ int pthread_barrier_init(pthread_barrier_t *__restrict barrier,
 
 int pthread_barrier_destroy(pthread_barrier_t *barrier) {
 	// Wait until there are no threads still using the barrier.
-	unsigned inside = 0;
-	do {
+	while (true) {
 		unsigned expected = __atomic_load_n(&barrier->__mlibc_inside, __ATOMIC_RELAXED);
 		if (expected == 0)
 			break;
@@ -970,7 +995,7 @@ int pthread_barrier_destroy(pthread_barrier_t *barrier) {
 		int e = mlibc::sys_futex_wait((int *)&barrier->__mlibc_inside, expected, nullptr);
 		if (e != 0 && e != EAGAIN && e != EINTR)
 			mlibc::panicLogger() << "mlibc: sys_futex_wait() returned error " << e << frg::endlog;
-	} while (inside > 0);
+	}
 
 	memset(barrier, 0, sizeof *barrier);
 	return 0;
@@ -991,7 +1016,7 @@ int pthread_barrier_wait(pthread_barrier_t *barrier) {
 	auto leave = [&](){
 		unsigned inside = __atomic_sub_fetch(&barrier->__mlibc_inside, 1, __ATOMIC_RELEASE);
 		if (inside == 0)
-			mlibc::sys_futex_wake((int *)&barrier->__mlibc_inside);
+			mlibc::sys_futex_wake((int *)&barrier->__mlibc_inside, 1);
 	};
 
 	unsigned seq = __atomic_load_n(&barrier->__mlibc_seq, __ATOMIC_ACQUIRE);
@@ -1006,7 +1031,7 @@ int pthread_barrier_wait(pthread_barrier_t *barrier) {
 				__atomic_fetch_add(&barrier->__mlibc_seq, 1, __ATOMIC_ACQUIRE);
 				__atomic_store_n(&barrier->__mlibc_waiting, 0, __ATOMIC_RELEASE);
 
-				mlibc::sys_futex_wake((int *)&barrier->__mlibc_seq);
+				mlibc::sys_futex_wake((int *)&barrier->__mlibc_seq, INT_MAX);
 
 				leave();
 				return PTHREAD_BARRIER_SERIAL_THREAD;
@@ -1365,10 +1390,19 @@ int pthread_rwlock_unlock(pthread_rwlock_t *rw) {
 	}
 }
 
-int pthread_getcpuclockid(pthread_t, clockid_t *) {
-	mlibc::infoLogger() << "mlibc: pthread_getcpuclockid() always returns ENOENT"
-			<< frg::endlog;
-	return ENOENT;
+int pthread_getcpuclockid(pthread_t thread, clockid_t *clockid) {
+	if(!clockid)
+		return EINVAL;
+
+	// Unified's kernel clock_gettime currently supports CLOCK_THREAD_CPUTIME_ID
+	// as a plain clock id (not Linux's per-thread encoded clock ids).
+	// Return a usable id so software like HotSpot can enable thread CPU timing
+	// instead of seeing a hard ENOENT stub.
+	if(!thread)
+		return ESRCH;
+
+	*clockid = CLOCK_THREAD_CPUTIME_ID;
+	return 0;
 }
 
 int pthread_spin_init(pthread_spinlock_t *__lock, int) {

@@ -80,6 +80,8 @@ int sys_ioctl(int fd, unsigned long request, void *arg, int *result);
 [[gnu::weak]] int sys_syncfs(int fd);
 [[gnu::weak]] int sys_unshare(int flags);
 [[gnu::weak]] int sys_setns(int fd, int nstype);
+[[gnu::weak]] int sys_clone_linux(int (*fn)(void *), void *stack, int flags, void *arg,
+		pid_t *parent_tid, void *tls, pid_t *child_tid, int *out);
 
 [[gnu::weak]] int sys_pidfd_open(pid_t pid, unsigned int flags, int *outfd);
 [[gnu::weak]] int sys_pidfd_getpid(int fd, pid_t *outpid);

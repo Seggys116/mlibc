@@ -39,9 +39,22 @@ int sched_get_priority_min(int policy) {
 	return res;
 }
 
-int sched_setscheduler(pid_t, int, const struct sched_param *) {
-	__ensure(!"Not implemented");
-	__builtin_unreachable();
+int sched_setscheduler(pid_t pid, int policy, const struct sched_param *param) {
+	int old_policy = 0;
+
+	auto get_sysdep = MLIBC_CHECK_OR_ENOSYS(mlibc::sys_getscheduler, -1);
+	if(int e = get_sysdep(pid, &old_policy); e) {
+		errno = e;
+		return -1;
+	}
+
+	auto set_sysdep = MLIBC_CHECK_OR_ENOSYS(mlibc::sys_setscheduler, -1);
+	if(int e = set_sysdep(pid, policy, param); e) {
+		errno = e;
+		return -1;
+	}
+
+	return old_policy;
 }
 
 int sched_getparam(pid_t pid, struct sched_param *param) {

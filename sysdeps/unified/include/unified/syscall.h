@@ -174,6 +174,31 @@
 #define SYS_MEMFD_CREATE        171
 #define SYS_GETTIDID            172
 #define SYS_SETTIDID            173
+#define SYS_MADVISE             174
+#define SYS_GETSCHEDPARAM       175
+#define SYS_SETSCHEDPARAM       176
+#define SYS_SYSCONF             177
+#define SYS_READV               178
+#define SYS_WRITEV              179
+#define SYS_STATVFS             180
+#define SYS_FSTATVFS            181
+#define SYS_FACCESSAT           182
+#define SYS_FCHMODAT            183
+#define SYS_FCHOWNAT            184
+#define SYS_LINKAT              185
+#define SYS_SYMLINKAT           186
+#define SYS_UTIMENSAT           187
+#define SYS_CLOCK_GETRES        188
+#define SYS_CLOCK_GETTIME       189
+#define SYS_SIGALTSTACK         190
+#define SYS_MREMAP              191
+#define SYS_SIGTIMEDWAIT        192
+#define SYS_TGKILL              193
+#define SYS_FADVISE             194
+#define SYS_GETPRIORITYMAX      195
+#define SYS_GETPRIORITYMIN      196
+#define SYS_FDATASYNC           197
+#define SYS_MINCORE            198
 
 #ifdef __cplusplus
 extern "C"{
@@ -182,55 +207,55 @@ extern "C"{
 __attribute__((__always_inline__))
 static inline long syscalln0(uint64_t call) {
     volatile long ret;
-    asm volatile("int $0x69" : "=a"(ret) : "a"(call)); 
+    __asm__ volatile("int $0x69" : "=a"(ret) : "a"(call));
     return ret;
 }
 
 __attribute__((__always_inline__))
 static long syscalln1(uint64_t call, uint64_t arg0) {
     volatile long ret;
-    asm volatile("int $0x69" : "=a"(ret) : "a"(call), "D"(arg0) : "memory"); 
+    __asm__ volatile("int $0x69" : "=a"(ret) : "a"(call), "D"(arg0) : "memory");
     return ret;
 }
 
 __attribute__((__always_inline__))
 static long syscalln2(uint64_t call, uint64_t arg0, uint64_t arg1) {
     volatile long ret;
-    asm volatile("int $0x69" : "=a"(ret) : "a"(call), "D"(arg0), "S"(arg1) : "memory"); 
+    __asm__ volatile("int $0x69" : "=a"(ret) : "a"(call), "D"(arg0), "S"(arg1) : "memory");
     return ret;
 }
 
 __attribute__((__always_inline__))
 static long syscalln3(uint64_t call, uint64_t arg0, uint64_t arg1, uint64_t arg2) {
     volatile long ret;
-    asm volatile("int $0x69" : "=a"(ret) : "a"(call), "D"(arg0), "S"(arg1), "d"(arg2) : "memory"); 
+    __asm__ volatile("int $0x69" : "=a"(ret) : "a"(call), "D"(arg0), "S"(arg1), "d"(arg2) : "memory");
     return ret;
 }
 
 __attribute__((__always_inline__))
 static long syscalln4(uint64_t call, uint64_t arg0, uint64_t arg1, uint64_t arg2, uint64_t arg3) {
     volatile long ret;
-	register uint64_t arg3r asm("r10") = arg3; /* put arg3 in r10 */
-    asm volatile("int $0x69" : "=a"(ret) : "a"(call), "D"(arg0), "S"(arg1), "d"(arg2), "r"(arg3r) : "memory"); 
+	register uint64_t arg3r __asm__("r10") = arg3; /* put arg3 in r10 */
+    __asm__ volatile("int $0x69" : "=a"(ret) : "a"(call), "D"(arg0), "S"(arg1), "d"(arg2), "r"(arg3r) : "memory");
     return ret;
 }
 
 __attribute__((__always_inline__))
 static long syscalln5(uint64_t call, uint64_t arg0, uint64_t arg1, uint64_t arg2, uint64_t arg3, uint64_t arg4) {
     volatile long ret;
-	register uint64_t arg3r asm("r10") = arg3; /* put arg3 in r10 */
-	register uint64_t arg4r asm("r9") = arg4; /* put arg4 in r9 */
-    asm volatile("int $0x69" : "=a"(ret) : "a"(call), "D"(arg0), "S"(arg1), "d"(arg2), "r"(arg3r), "r"(arg4r) : "memory"); 
+	register uint64_t arg3r __asm__("r10") = arg3; /* put arg3 in r10 */
+	register uint64_t arg4r __asm__("r9") = arg4; /* put arg4 in r9 */
+    __asm__ volatile("int $0x69" : "=a"(ret) : "a"(call), "D"(arg0), "S"(arg1), "d"(arg2), "r"(arg3r), "r"(arg4r) : "memory");
     return ret;
 }
 
 __attribute__((__always_inline__))
 static long syscalln6(uint64_t call, uint64_t arg0, uint64_t arg1, uint64_t arg2, uint64_t arg3, uint64_t arg4, uint64_t arg5) {
     volatile long ret;
-	register uint64_t arg3r asm("r10") = arg3; /* put arg3 in r10 */
-	register uint64_t arg4r asm("r9") = arg4; /* put arg4 in r9 */
-	register uint64_t arg5r asm("r8") = arg5; /* put arg5 in r8 */
-    asm volatile("int $0x69" : "=a"(ret) : "a"(call), "D"(arg0), "S"(arg1), "d"(arg2), "r"(arg3r), "r"(arg4r), "r"(arg5r) : "memory");
+	register uint64_t arg3r __asm__("r10") = arg3; /* put arg3 in r10 */
+	register uint64_t arg4r __asm__("r9") = arg4; /* put arg4 in r9 */
+	register uint64_t arg5r __asm__("r8") = arg5; /* put arg5 in r8 */
+    __asm__ volatile("int $0x69" : "=a"(ret) : "a"(call), "D"(arg0), "S"(arg1), "d"(arg2), "r"(arg3r), "r"(arg4r), "r"(arg5r) : "memory");
     return ret;
 }
 
@@ -239,11 +264,11 @@ static long syscalln6(uint64_t call, uint64_t arg0, uint64_t arg1, uint64_t arg2
 __attribute__((__always_inline__))
 static long syscalln7(uint64_t call, uint64_t arg0, uint64_t arg1, uint64_t arg2, uint64_t arg3, uint64_t arg4, uint64_t arg5, uint64_t arg6) {
     volatile long ret;
-	register uint64_t arg3r asm("r10") = arg3; /* put arg3 in r10 */
-	register uint64_t arg4r asm("r9") = arg4; /* put arg4 in r9 */
-	register uint64_t arg5r asm("r8") = arg5; /* put arg5 in r8 */
-	register uint64_t arg6r asm("r12") = arg6; /* put arg6 in r12 */
-    asm volatile("int $0x69" : "=a"(ret) : "a"(call), "D"(arg0), "S"(arg1), "d"(arg2), "r"(arg3r), "r"(arg4r), "r"(arg5r), "r"(arg6r) : "memory");
+	register uint64_t arg3r __asm__("r10") = arg3; /* put arg3 in r10 */
+	register uint64_t arg4r __asm__("r9") = arg4; /* put arg4 in r9 */
+	register uint64_t arg5r __asm__("r8") = arg5; /* put arg5 in r8 */
+	register uint64_t arg6r __asm__("r12") = arg6; /* put arg6 in r12 */
+    __asm__ volatile("int $0x69" : "=a"(ret) : "a"(call), "D"(arg0), "S"(arg1), "d"(arg2), "r"(arg3r), "r"(arg4r), "r"(arg5r), "r"(arg6r) : "memory");
     return ret;
 }
 
@@ -258,13 +283,17 @@ static long syscalln7(uint64_t call, uint64_t arg0, uint64_t arg1, uint64_t arg2
     __attribute__((__always_inline__)) static inline long _syscall(uint64_t call, uint64_t arg0, uint64_t arg1, uint64_t arg2, uint64_t arg3, uint64_t arg4, uint64_t arg5)  { return syscalln6(call, arg0, arg1, arg2, arg3, arg4, arg5); }
     __attribute__((__always_inline__)) static inline long _syscall(uint64_t call, uint64_t arg0, uint64_t arg1, uint64_t arg2, uint64_t arg3, uint64_t arg4, uint64_t arg5, uint64_t arg6)  { return syscalln7(call, arg0, arg1, arg2, arg3, arg4, arg5, arg6); }
 
+#ifndef UNIFIED_NO_SYSCALL_MACRO
     template<typename... T>
     __attribute__((__always_inline__)) static inline long syscall(uint64_t call, T... args){
         return _syscall(call, (uint64_t)(args)...);
     }
+#endif /* UNIFIED_NO_SYSCALL_MACRO */
 #else
+#ifndef UNIFIED_NO_SYSCALL_MACRO
     #define GET_SYSCALL(a0, a1, a2, a3, a4, a5, a6, a7, name, ...) name
     #define syscall(...) GET_SYSCALL(__VA_ARGS__, syscalln7, syscalln6, syscalln5, syscalln4, syscalln3, syscalln2, syscalln1, syscalln0)(__VA_ARGS__)
+#endif /* UNIFIED_NO_SYSCALL_MACRO */
 #endif
 
 #endif

@@ -97,6 +97,8 @@ struct Tcb {
 #endif
 	uintptr_t stackCanary;
 	int cancelBits;
+	int startGate;
+	int startupError;
 
 	union {
 		void *voidPtr;
@@ -126,6 +128,7 @@ struct Tcb {
 
 	CleanupHandler *cleanupBegin;
 	CleanupHandler *cleanupEnd;
+	// Thread state flags (kJoinableBit, kStackOwnedBit in threads.cpp).
 	int isJoinable;
 
 	struct LocalKey {
