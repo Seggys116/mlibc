@@ -58,7 +58,11 @@ int sys_futex_wake(int *pointer, int count) {
 	long ret = syscall(SYS_FUTEX_WAKE, pointer, count);
 	if (ret < 0)
 		return -ret;
-	return 0;
+	// mlibc's mutex/condvar code relies on Linux-style FUTEX_WAKE semantics:
+	// the return value is the number of waiters actually woken. Reporting 0
+	// for every successful wake breaks wake-one handoff chains and strands
+	// remaining waiters behind the mutex waiters bit.
+	return static_cast<int>(ret);
 }
 
 int sys_tcb_set(void* pointer){
@@ -199,14 +203,19 @@ int sys_gethostname(char *buffer, size_t bufsize) {
 		return EFAULT;
 	}
 
-	if (bufsize) {
-		const char *name = "unified";
+	if (!bufsize)
+		return 0;
+
+	struct utsname uts = {};
+	if (sys_uname(&uts) == 0) {
 		size_t i = 0;
-		for (; i + 1 < bufsize && name[i]; ++i) {
-			buffer[i] = name[i];
-		}
+		for (; i + 1 < bufsize && uts.nodename[i]; ++i)
+			buffer[i] = uts.nodename[i];
 		buffer[i] = '\0';
+		return 0;
 	}
+
+	buffer[0] = '\0';
 	return 0;
 }
 
@@ -667,8 +676,7 @@ int sys_setaffinity(pid_t pid, size_t cpusetsize, const cpu_set_t *mask) {
 }
 
 int sys_getthreadaffinity(pid_t tid, size_t cpusetsize, cpu_set_t *mask) {
-	pid_t encoded = tid > 0 ? -tid : tid;
-	long ret = syscall(SYS_SCHED_GETAFFINITY, encoded, cpusetsize, mask);
+	long ret = syscall(SYS_SCHED_GETAFFINITY, tid, cpusetsize, mask);
 	if (ret < 0) {
 		return -ret;
 	}
@@ -676,8 +684,7 @@ int sys_getthreadaffinity(pid_t tid, size_t cpusetsize, cpu_set_t *mask) {
 }
 
 int sys_setthreadaffinity(pid_t tid, size_t cpusetsize, const cpu_set_t *mask) {
-	pid_t encoded = tid > 0 ? -tid : tid;
-	long ret = syscall(SYS_SCHED_SETAFFINITY, encoded, cpusetsize, mask);
+	long ret = syscall(SYS_SCHED_SETAFFINITY, tid, cpusetsize, mask);
 	if (ret < 0) {
 		return -ret;
 	}

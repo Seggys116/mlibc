@@ -48,7 +48,7 @@ struct Guard {
 	void unlock() {
 		__atomic_store_n(&mutex, 0, __ATOMIC_RELEASE);
 		int e = mlibc::sys_futex_wake(reinterpret_cast<int *>(&mutex));
-		if(e) {
+		if(e < 0) {
 			mlibc::panicLogger() << "mlibc: __cxa_guard_release futex wake failed with error "
 					<< e << frg::endlog;
 			__builtin_trap();

@@ -13,6 +13,7 @@
 #include <bits/ensure.h>
 #include <frg/allocation.hpp>
 #include <frg/array.hpp>
+#include <frg/mutex.hpp>
 #include <frg/spinlock.hpp>
 #include <mlibc/allocator.hpp>
 #include <mlibc/debug.hpp>
@@ -26,6 +27,19 @@
 
 namespace {
 static constexpr int kJoinableBit = 1;
+frg::ticket_spinlock globalAtforkMutex;
+Tcb::AtforkHandler *globalAtforkBegin = nullptr;
+Tcb::AtforkHandler *globalAtforkEnd = nullptr;
+}
+
+namespace mlibc {
+void snapshot_atfork_handlers(Tcb::AtforkHandler **begin, Tcb::AtforkHandler **end) {
+	frg::unique_lock lock{globalAtforkMutex};
+	if(begin)
+		*begin = globalAtforkBegin;
+	if(end)
+		*end = globalAtforkEnd;
+}
 }
 
 // This trace hook injects C++ ctor/dtor calls into every pthread primitive.
@@ -662,8 +676,6 @@ int pthread_cancel(pthread_t thread) {
 }
 
 int pthread_atfork(void (*prepare) (void), void (*parent) (void), void (*child) (void)) {
-	auto self = mlibc::get_current_tcb();
-
 	auto hand = frg::construct<Tcb::AtforkHandler>(getAllocator());
 	if (!hand)
 		return -1;
@@ -672,15 +684,16 @@ int pthread_atfork(void (*prepare) (void), void (*parent) (void), void (*child) 
 	hand->parent = parent;
 	hand->child = child;
 	hand->next = nullptr;
-	hand->prev = self->atforkEnd;
+	frg::unique_lock lock{globalAtforkMutex};
+	hand->prev = globalAtforkEnd;
 
-	if (self->atforkEnd)
-		self->atforkEnd->next = hand;
+	if (globalAtforkEnd)
+		globalAtforkEnd->next = hand;
 
-	self->atforkEnd = hand;
+	globalAtforkEnd = hand;
 
-	if (!self->atforkBegin)
-		self->atforkBegin = self->atforkEnd;
+	if (!globalAtforkBegin)
+		globalAtforkBegin = globalAtforkEnd;
 
 	return 0;
 }

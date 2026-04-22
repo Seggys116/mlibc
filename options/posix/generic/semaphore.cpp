@@ -124,9 +124,10 @@ int sem_post(sem_t *sem) {
 					false, __ATOMIC_RELEASE, __ATOMIC_RELAXED))
 			continue;
 
-		if (state & semaphoreHasWaiters)
-			if (int e = mlibc::sys_futex_wake((int *)&sem->__mlibc_count); e)
-				__ensure(!"sys_futex_wake() failed");
+		if (state & semaphoreHasWaiters) {
+			int e = mlibc::sys_futex_wake((int *)&sem->__mlibc_count);
+			__ensure(e >= 0);
+		}
 
 		return 0;
 	}

@@ -8,6 +8,7 @@
 #include <string.h>
 #include <sys/resource.h>
 #include <sys/stat.h>
+#include <sys/utsname.h>
 #include <termios.h>
 #include <unistd.h>
 #include <utmpx.h>
@@ -20,6 +21,7 @@
 #include <mlibc/getopt.hpp>
 #include <mlibc/posix-sysdeps.hpp>
 #include <mlibc/thread.hpp>
+#include <mlibc/tcb.hpp>
 #include <mlibc/utmp.hpp>
 
 #if __MLIBC_BSD_OPTION
@@ -35,6 +37,10 @@ namespace {
 constexpr bool logExecvpeTries = false;
 
 } // namespace
+
+namespace mlibc {
+void snapshot_atfork_handlers(Tcb::AtforkHandler **begin, Tcb::AtforkHandler **end);
+}
 
 unsigned int alarm(unsigned int seconds) {
 	struct itimerval it = {}, old = {};
@@ -1236,25 +1242,37 @@ int dup3(int oldfd, int newfd, int flags) {
 }
 
 pid_t fork(void) {
-	auto self = mlibc::get_current_tcb();
 	pid_t child;
+	Tcb::AtforkHandler *atforkBegin = nullptr;
+	Tcb::AtforkHandler *atforkEnd = nullptr;
 
 	MLIBC_CHECK_OR_ENOSYS(mlibc::sys_fork, -1);
+	mlibc::snapshot_atfork_handlers(&atforkBegin, &atforkEnd);
 
-	auto hand = self->atforkEnd;
+	auto hand = atforkEnd;
 	while (hand) {
 		if (hand->prepare)
 			hand->prepare();
+		if (hand == atforkBegin)
+			break;
 
 		hand = hand->prev;
 	}
 
 	if(int e = mlibc::sys_fork(&child); e) {
+		hand = atforkBegin;
+		while (hand) {
+			if (hand->parent)
+				hand->parent();
+			if (hand == atforkEnd)
+				break;
+			hand = hand->next;
+		}
 		errno = e;
 		return -1;
 	}
 
-	hand = self->atforkBegin;
+	hand = atforkBegin;
 	while (hand) {
 		if (!child) {
 			if (hand->child)
@@ -1263,6 +1281,8 @@ pid_t fork(void) {
 			if (hand->parent)
 				hand->parent();
 		}
+		if (hand == atforkEnd)
+			break;
 		hand = hand->next;
 	}
 
@@ -1499,9 +1519,30 @@ int setresgid(gid_t rgid, gid_t egid, gid_t sgid) {
 	return 0;
 }
 
-int getdomainname(char *, size_t) {
-	__ensure(!"Not implemented");
-	__builtin_unreachable();
+int getdomainname(char *name, size_t len) {
+	MLIBC_CHECK_OR_ENOSYS(mlibc::sys_uname, -1);
+
+	struct utsname uts = {};
+	if(int e = mlibc::sys_uname(&uts); e) {
+		errno = e;
+		return -1;
+	}
+
+#if defined(_GNU_SOURCE)
+	const char *domain = uts.domainname;
+#else
+	const char *domain = uts.__domainname;
+#endif
+
+	size_t domain_len = strlen(domain);
+	if(domain_len >= len) {
+		errno = EINVAL;
+		return -1;
+	}
+
+	if(len)
+		memcpy(name, domain, domain_len + 1);
+	return 0;
 }
 
 int setdomainname(const char *, size_t) {

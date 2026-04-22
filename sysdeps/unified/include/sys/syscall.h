@@ -183,12 +183,19 @@ static inline long __mlibc_posix_syscall7(long number, long arg0, long arg1, lon
 #endif
 
 #ifndef MLIBC_NO_POSIX_SYSCALL_MACRO
+#ifdef __cplusplus
+/* C++ path: use template-based inlines that accept any argument type safely. */
 #define __MLIBC_GET_POSIX_SYSCALL(_1, _2, _3, _4, _5, _6, _7, _8, NAME, ...) NAME
 #define syscall(...) __MLIBC_GET_POSIX_SYSCALL(__VA_ARGS__, \
         __mlibc_posix_syscall7, __mlibc_posix_syscall6, \
         __mlibc_posix_syscall5, __mlibc_posix_syscall4, \
         __mlibc_posix_syscall3, __mlibc_posix_syscall2, \
         __mlibc_posix_syscall1, __mlibc_posix_syscall0)(__VA_ARGS__)
+#endif /* __cplusplus */
+/* C path: let C code use the real variadic syscall() function declared above.
+ * The C inline helpers use long-typed parameters, which reject pointer
+ * arguments (e.g. struct epoll_event *) with -Wint-conversion errors.
+ * The actual syscall() function is variadic and accepts any type safely. */
 #endif
 
 #endif /* _SYS_SYSCALL_H */

@@ -12,6 +12,7 @@
 #include <mlibc/tcb.hpp>
 #include <mlibc/time-helpers.hpp>
 #include <sched.h>
+#include <sys/syscall.h>
 #include <unistd.h>
 
 extern "C" Tcb *__rtld_allocateTcb();
@@ -123,8 +124,8 @@ int thread_once(__mlibc_once *once, void (*func) (void)) {
 
 			// unlock the mutex.
 			__atomic_exchange_n(&once->__mlibc_done, onceComplete, __ATOMIC_RELEASE);
-			if(int e = mlibc::sys_futex_wake((int *)&once->__mlibc_done, INT_MAX); e)
-				__ensure(!"sys_futex_wake() failed");
+			int e = mlibc::sys_futex_wake((int *)&once->__mlibc_done, INT_MAX);
+			__ensure(e >= 0);
 			return 0;
 		}else{
 			// a different thread is currently running the initializer.
@@ -267,17 +268,24 @@ int thread_join(struct __mlibc_thread_data *thread, void *ret) {
 		observedFlags = expected;
 	}
 
-	// Wait for kernel thread teardown via CLONE_CHILD_CLEARTID (tid -> 0)
-	// before reclaiming the joined thread's stack.
+	// Wait until the thread has fully exited.
 	//
-	// Normal exits publish didExit before entering sys_thread_exit(), but fatal
-	// signal/abnormal exit paths can clear the child TID without ever setting
-	// didExit. Waiting on didExit first wedges pthread_join() forever on those
-	// exits even though the kernel already issued the clear/wake.
+	// Most sysdeps allow pthread_join() to proceed once either:
+	//  1. tcb->tid is zeroed via CLONE_CHILD_CLEARTID, or
+	//  2. tcb->didExit is published by thread_exit() before sys_thread_exit().
+	//
+	// UnifiedOS is stricter: the kernel only makes the joined thread's user
+	// stack reclaimable once its exit path has committed and retired the stack
+	// metadata. Userspace-visible didExit is published earlier than that, so
+	// join must wait for the kernel-owned TID slot to reach zero.
 	for(;;) {
 		int observedTid = __atomic_load_n(&tcb->tid, __ATOMIC_ACQUIRE);
 		if(!observedTid)
 			break;
+#ifndef SYS_SETTIDID
+		if(__atomic_load_n(&tcb->didExit, __ATOMIC_ACQUIRE))
+			break;
+#endif
 		mlibc::sys_futex_wait(&tcb->tid, observedTid, nullptr);
 	}
 
@@ -380,6 +388,14 @@ __attribute__ ((__noreturn__)) void thread_exit(thread_exit_return ret_val) {
 
 	__atomic_store_n(&self->didExit, 1, __ATOMIC_RELEASE);
 	sys_futex_wake(&self->didExit);
+
+	// Wake any thread_join waiters sitting on &self->tid so they can observe
+	// didExit == 1.  Do NOT zero self->tid here: the exiting thread is still
+	// running on its stack through do_exit(), and freeing the stack before the
+	// kernel syscall completes would be a use-after-free.  Fatal-signal exits
+	// (that never call thread_exit) still rely on CLONE_CHILD_CLEARTID to zero
+	// tcb->tid.
+	sys_futex_wake(&self->tid);
 
 	// TODO: clean up thread resources when we are detached.
 
@@ -664,16 +680,16 @@ int thread_cond_destroy(struct __mlibc_cond *) {
 
 int thread_cond_signal(struct __mlibc_cond *cond) {
 	__atomic_fetch_add(&cond->__mlibc_seq, 1, __ATOMIC_RELEASE);
-	if(int e = mlibc::sys_futex_wake((int *)&cond->__mlibc_seq, 1); e)
-		__ensure(!"sys_futex_wake() failed");
+	int e = mlibc::sys_futex_wake((int *)&cond->__mlibc_seq, 1);
+	__ensure(e >= 0);
 
 	return 0;
 }
 
 int thread_cond_broadcast(struct __mlibc_cond *cond) {
 	__atomic_fetch_add(&cond->__mlibc_seq, 1, __ATOMIC_RELEASE);
-	if(int e = mlibc::sys_futex_wake((int *)&cond->__mlibc_seq, INT_MAX); e)
-		__ensure(!"sys_futex_wake() failed");
+	int e = mlibc::sys_futex_wake((int *)&cond->__mlibc_seq, INT_MAX);
+	__ensure(e >= 0);
 
 	return 0;
 }
