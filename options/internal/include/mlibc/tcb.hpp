@@ -141,6 +141,8 @@ struct Tcb {
 	size_t stackSize;
 	void *stackAddr;
 	size_t guardSize;
+	void *threadEntry;
+	void *threadUserArg;
 
 	inline void invokeThreadFunc(void *entry, void *user_arg) {
 		if(returnValueType == TcbThreadReturnValue::Pointer) {

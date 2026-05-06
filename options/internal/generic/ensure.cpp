@@ -7,6 +7,7 @@ void __ensure_fail(const char *assertion, const char *file, unsigned int line,
 	mlibc::panicLogger() << "In function " << function
 			<< ", file " << file << ":" << line << "\n"
 			<< "__ensure(" << assertion << ") failed" << frg::endlog;
+	__builtin_unreachable();
 }
 
 void __ensure_warn(const char *assertion, const char *file, unsigned int line,
@@ -15,4 +16,3 @@ void __ensure_warn(const char *assertion, const char *file, unsigned int line,
 			<< ", file " << file << ":" << line << "\n"
 			<< "__ensure(" << assertion << ") failed" << frg::endlog;
 }
-

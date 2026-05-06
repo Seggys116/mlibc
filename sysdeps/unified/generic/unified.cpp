@@ -443,10 +443,27 @@ int sys_clone_linux(int (*fn)(void *), void *stack, int flags, void *arg,
 	return 0;
 }
 
-void sys_thread_exit(){
-	syscall(SYS_EXIT_THREAD);
-
+[[noreturn]] void sys_thread_exit(){
+#if defined(__x86_64__)
+	__asm__ volatile(
+		"1:\n\t"
+		"mov $69, %%rax\n\t"
+		"xor %%edi, %%edi\n\t"
+		"xor %%esi, %%esi\n\t"
+		"xor %%edx, %%edx\n\t"
+		"xor %%r10d, %%r10d\n\t"
+		"xor %%r9d, %%r9d\n\t"
+		"xor %%r8d, %%r8d\n\t"
+		"int $0x69\n\t"
+		"jmp 1b\n\t"
+		:
+		:
+		: "rax", "rdi", "rsi", "rdx", "r10", "r9", "r8", "memory", "cc");
 	__builtin_unreachable();
+#else
+	for(;;)
+		syscall(SYS_EXIT_THREAD);
+#endif
 }
 
 int sys_waitpid(pid_t pid, int *status, int flags, struct rusage *ru, pid_t *ret_pid){
@@ -494,11 +511,45 @@ int sys_pidfd_send_signal(int pidfd, int sig, siginfo_t *info, unsigned int flag
 }
 
 int sys_fork(pid_t *child){
-	long pid = syscall(SYS_FORK, 0);
-	if(pid < 0){
-		return -pid;
+	int retries = 0;
+	while (true) {
+		long ret = syscall(SYS_FORK, 0);
+		int64_t sret = static_cast<int64_t>(ret);
+		if (sret >= 0) {
+			*child = static_cast<pid_t>(sret);
+			return 0;
+		}
+		if (sret == -EAGAIN && retries < 10) {
+			retries++;
+			syscalln0(SYS_YIELD);
+			continue;
+		}
+		return static_cast<int>(-sret);
 	}
-	*child = pid;
+}
+
+int sys_getpriority(int which, id_t who, int *value) {
+	// Linux ABI: kernel returns (20 - nice), clamped to [1, 40]. Negative
+	// result == -errno. mlibc translates back to raw nice for POSIX
+	// getpriority() callers; they disambiguate the -1 sentinel by clearing
+	// errno before the call.
+	auto ret = syscalln3(SYS_GETPRIORITY, which, who, 0);
+	int64_t sret = static_cast<int64_t>(ret);
+	if (sret < 0) {
+		return static_cast<int>(-sret);
+	}
+	if (value) *value = 20 - static_cast<int>(sret);
+	return 0;
+}
+
+int sys_setpriority(int which, id_t who, int prio) {
+	// Linux ABI: caller passes raw nice ([-20, 19]) directly; kernel clamps.
+	// No translation needed.
+	auto ret = syscalln3(SYS_SETPRIORITY, which, who, static_cast<uint64_t>(static_cast<int64_t>(prio)));
+	int64_t sret = static_cast<int64_t>(ret);
+	if (sret < 0) {
+		return static_cast<int>(-sret);
+	}
 	return 0;
 }
 

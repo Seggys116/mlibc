@@ -5,6 +5,7 @@
 
 #include <mlibc/debug.hpp>
 #include <mlibc/ansi-sysdeps.hpp>
+#include <mlibc/posix-sysdeps.hpp>
 
 __sighandler signal(int sn, __sighandler handler) {
 	struct sigaction sa;
@@ -21,6 +22,21 @@ __sighandler signal(int sn, __sighandler handler) {
 }
 
 int raise(int sig) {
+	// POSIX: in a multithreaded program, raise(sig) is equivalent to
+	// pthread_kill(pthread_self(), sig), not kill(getpid(), sig). Using
+	// sys_kill here routes signal to ANY eligible thread in the process and
+	// can escape a per-thread signal mask that the caller set on itself only.
+	// Prefer sys_tgkill on the calling thread; fall back to sys_kill only when
+	// the tgkill sysdep is missing.
+	if (mlibc::sys_tgkill && mlibc::sys_gettid && mlibc::sys_getpid) {
+		pid_t tgid = mlibc::sys_getpid();
+		pid_t tid = mlibc::sys_gettid();
+		if (int e = mlibc::sys_tgkill(tgid, tid, sig)) {
+			errno = e;
+			return -1;
+		}
+		return 0;
+	}
 	MLIBC_CHECK_OR_ENOSYS(mlibc::sys_getpid && mlibc::sys_kill, -1);
 	pid_t pid = mlibc::sys_getpid();
 

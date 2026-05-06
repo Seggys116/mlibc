@@ -215,14 +215,37 @@ extern "C"{
 __attribute__((__always_inline__))
 static inline long syscalln0(uint64_t call) {
     volatile long ret;
-    __asm__ volatile("int $0x69" : "=a"(ret) : "a"(call) : "memory", "cc");
+    /* Zero unused arg registers — see syscalln1 for rationale. */
+    register uint64_t r10z __asm__("r10") = 0;
+    register uint64_t r9z  __asm__("r9")  = 0;
+    register uint64_t r8z  __asm__("r8")  = 0;
+    __asm__ volatile("int $0x69"
+                     : "=a"(ret)
+                     : "a"(call), "D"(0ULL), "S"(0ULL), "d"(0ULL),
+                       "r"(r10z), "r"(r9z), "r"(r8z)
+                     : "memory", "cc");
     return ret;
 }
 
 __attribute__((__always_inline__))
 static long syscalln1(uint64_t call, uint64_t arg0) {
     volatile long ret;
-    __asm__ volatile("int $0x69" : "=a"(ret) : "a"(call), "D"(arg0) : "memory", "cc");
+    /* Explicitly zero the unused argument registers (rsi/rdx/r10/r9/r8).
+     * The kernel-side syscall ABI does not document register liveness for
+     * unused argument slots, but several multiplexed Linux-compat syscalls
+     * (notably SYS_set_tid_address aliased onto SYS_SETTIDID) inspect arg1
+     * to disambiguate between length-prefixed thread-name vs single-arg
+     * Linux ABI. If the C compiler leaves unrelated values in those
+     * registers, multiplex dispatch routes deterministically wrong. Zeroing
+     * here makes one-arg syscalls pass arg1..arg4 = 0 by contract. */
+    register uint64_t r10z __asm__("r10") = 0;
+    register uint64_t r9z  __asm__("r9")  = 0;
+    register uint64_t r8z  __asm__("r8")  = 0;
+    __asm__ volatile("int $0x69"
+                     : "=a"(ret)
+                     : "a"(call), "D"(arg0), "S"(0ULL), "d"(0ULL),
+                       "r"(r10z), "r"(r9z), "r"(r8z)
+                     : "memory", "cc");
     return ret;
 }
 

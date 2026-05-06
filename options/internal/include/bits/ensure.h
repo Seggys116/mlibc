@@ -9,15 +9,17 @@ extern "C" {
 #ifndef __MLIBC_ABI_ONLY
 
 void __ensure_fail(const char *assertion, const char *file, unsigned int line,
-		const char *function);
+		const char *function) __attribute__((__noreturn__));
 
 void __ensure_warn(const char *assertion, const char *file, unsigned int line,
 		const char *function);
 
 #endif /* !__MLIBC_ABI_ONLY */
 
-#define __ensure(assertion) do { if(!(assertion)) \
-		__ensure_fail(#assertion, __FILE__, __LINE__, __func__); } while(0)
+#define __ensure(assertion) do { if(!(assertion)) { \
+		__ensure_fail(#assertion, __FILE__, __LINE__, __func__); \
+		__builtin_unreachable(); \
+	} } while(0)
 
 #define MLIBC_UNIMPLEMENTED() __ensure_fail("Functionality is not implemented", \
 		__FILE__, __LINE__, __func__)
@@ -42,4 +44,3 @@ void __ensure_warn(const char *assertion, const char *file, unsigned int line,
 #endif
 
 #endif /* _MLIBC_INTERNAL_ENSURE_H */
-

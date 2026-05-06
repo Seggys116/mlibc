@@ -14,6 +14,7 @@
 #include <utmpx.h>
 
 #include <bits/ensure.h>
+#include <sys/syscall.h>
 #include <mlibc-config.h>
 #include <mlibc/allocator.hpp>
 #include <mlibc/arch-defs.hpp>
@@ -1303,13 +1304,25 @@ pid_t vfork(void) {
 	 *  as a result, we call sys_fork instead of running atforks
 	 */
 
-	/* deferring to fork as implementing vfork correctly requires assembly
-	 * to handle not mucking up the stack
+	/*
+	 * Unified-OS: the kernel's SYS_FORK accepts a vfork flag in arg0. When
+	 * set, the kernel blocks the parent until the child calls execve() or
+	 * _exit(). This matches POSIX vfork() semantics without needing the
+	 * traditional shared-stack assembly trick.
 	 */
 	if(!mlibc::sys_fork) {
 		MLIBC_MISSING_SYSDEP();
 		errno = ENOSYS;
 		return -1;
+	}
+
+	{
+		long ret = ::syscall(SYS_FORK, (long)0x56464f524bLL /* "VFORK" magic */);
+		if (ret < 0) {
+			errno = static_cast<int>(-ret);
+			return -1;
+		}
+		return static_cast<pid_t>(ret);
 	}
 
 	if(int e = mlibc::sys_fork(&child); e) {

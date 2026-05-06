@@ -1,4 +1,6 @@
 .section .text
+.hidden __mlibc_enter_thread
+.hidden __mlibc_enter_raw_clone
 .global __mlibc_start_thread
 .type __mlibc_start_thread, "function"
 .cfi_startproc
@@ -15,6 +17,7 @@ __mlibc_start_thread:
 	pop %rdx
 	.cfi_adjust_cfa_offset -8
 	.cfi_undefined %rdx
+	mov %fs:0, %rdx
 	call __mlibc_enter_thread
 	ud2
 .cfi_endproc

@@ -20,6 +20,59 @@ extern "C" Tcb *__rtld_allocateTcb();
 namespace {
 static constexpr int kJoinableBit = 1;
 static constexpr int kStackOwnedBit = 2;
+static constexpr size_t kPageSize = 0x1000;
+static constexpr size_t kDefaultStackSize = 0x200000;
+static constexpr size_t kThreadStackCacheMax = 256;
+
+static size_t align_stack_size(size_t value) {
+	return (value + (kPageSize - 1)) & ~(kPageSize - 1);
+}
+
+struct cached_thread_stack {
+	void *base;
+	size_t stackSize;
+	size_t guardSize;
+};
+
+FutexLock thread_stack_cache_mutex_;
+cached_thread_stack thread_stack_cache_[kThreadStackCacheMax];
+size_t thread_stack_cache_count_;
+
+static bool try_take_cached_thread_stack(size_t stackSize, size_t guardSize, void **base) {
+	thread_stack_cache_mutex_.lock();
+	for(size_t i = 0; i < thread_stack_cache_count_; i++) {
+		if(thread_stack_cache_[i].stackSize != stackSize
+				|| thread_stack_cache_[i].guardSize != guardSize)
+			continue;
+
+		*base = thread_stack_cache_[i].base;
+		thread_stack_cache_[i] = thread_stack_cache_[thread_stack_cache_count_ - 1];
+		thread_stack_cache_count_--;
+		thread_stack_cache_mutex_.unlock();
+		return true;
+	}
+	thread_stack_cache_mutex_.unlock();
+	return false;
+}
+
+static bool try_cache_thread_stack(void *base, size_t stackSize, size_t guardSize) {
+	if(!base || !stackSize)
+		return false;
+
+	thread_stack_cache_mutex_.lock();
+	if(thread_stack_cache_count_ >= kThreadStackCacheMax) {
+		thread_stack_cache_mutex_.unlock();
+		return false;
+	}
+
+	thread_stack_cache_[thread_stack_cache_count_++] = cached_thread_stack{
+		base,
+		stackSize,
+		guardSize
+	};
+	thread_stack_cache_mutex_.unlock();
+	return true;
+}
 
 struct key_global_info {
 	bool in_use;
@@ -69,17 +122,28 @@ static int validate_explicit_sched_attr(const __mlibc_threadattr &attr) {
 	return 0;
 }
 
-static void cleanup_failed_thread_create(Tcb *tcb) {
-	if(!tcb)
-		return;
+static int release_owned_thread_stack(Tcb *tcb) {
+	if(!(tcb->isJoinable & kStackOwnedBit) || !tcb->stackAddr || !tcb->stackSize)
+		return 0;
 
-	if((tcb->isJoinable & kStackOwnedBit) && tcb->stackAddr && tcb->stackSize) {
-		size_t map_size = tcb->stackSize + tcb->guardSize;
-		(void)mlibc::sys_vm_unmap(tcb->stackAddr, map_size);
+	int result = 0;
+	size_t map_size = tcb->stackSize + tcb->guardSize;
+	if(!try_cache_thread_stack(tcb->stackAddr, tcb->stackSize, tcb->guardSize))
+		result = mlibc::sys_vm_unmap(tcb->stackAddr, map_size);
+
+	if(!result) {
 		tcb->stackAddr = nullptr;
 		tcb->stackSize = 0;
 		tcb->guardSize = 0;
 	}
+	return result;
+}
+
+static void cleanup_failed_thread_create(Tcb *tcb) {
+	if(!tcb)
+		return;
+
+	(void)release_owned_thread_stack(tcb);
 	if(tcb->localKeys) {
 		frg::destruct(getAllocator(), tcb->localKeys);
 		tcb->localKeys = nullptr;
@@ -155,11 +219,34 @@ int thread_create(struct __mlibc_thread_data **__restrict thread, const struct _
 		return explicit_sched_error;
 
 	auto new_tcb = __rtld_allocateTcb();
+	if (!new_tcb) {
+		// Under chaos stress or heap pressure __rtld_allocateTcb can return
+		// null. Propagating it to sys_prepare_stack would push a NULL tcb onto
+		// the child's initial stack, which the child then dereferences in
+		// __mlibc_enter_thread (read of tcb->startGate at offset 0x34).
+		return EAGAIN;
+	}
+	new_tcb->stackAddr = nullptr;
+	new_tcb->stackSize = 0;
+	new_tcb->guardSize = 0;
 
 	// TODO: due to alignment guarantees, the stackaddr and stacksize might change
 	// when the stack is allocated. Currently this isn't propagated to the TCB,
 	// but it should be.
 	void *stack = attr.__mlibc_stackaddr;
+	if(!stack) {
+		size_t requested_stack_size = attr.__mlibc_stacksize
+				? align_stack_size(attr.__mlibc_stacksize)
+				: kDefaultStackSize;
+		size_t requested_guard_size = align_stack_size(attr.__mlibc_guardsize);
+		void *cached_stack = nullptr;
+		if(try_take_cached_thread_stack(requested_stack_size, requested_guard_size, &cached_stack)) {
+			stack = cached_stack;
+			attr.__mlibc_stacksize = requested_stack_size;
+			attr.__mlibc_guardsize = requested_guard_size;
+			new_tcb->stackAddr = cached_stack;
+		}
+	}
 	if (!mlibc::sys_prepare_stack) {
 		MLIBC_MISSING_SYSDEP();
 		cleanup_failed_thread_create(new_tcb);
@@ -178,6 +265,9 @@ int thread_create(struct __mlibc_thread_data **__restrict thread, const struct _
 	new_tcb->isJoinable = 0;
 	new_tcb->startGate = 0;
 	new_tcb->startupError = 0;
+	new_tcb->threadEntry = entry;
+	new_tcb->threadUserArg = user_arg;
+
 	if (attr.__mlibc_detachstate == __MLIBC_THREAD_CREATE_JOINABLE)
 		new_tcb->isJoinable |= kJoinableBit;
 	if (!attr.__mlibc_stackaddr)
@@ -203,6 +293,11 @@ int thread_create(struct __mlibc_thread_data **__restrict thread, const struct _
 		}
 		restore_sigmask = true;
 	}
+
+	// Prevent compiler reordering of stack stores (entry, user_arg, tcb fields
+	// written by sys_prepare_stack) across the sys_clone syscall boundary.
+	// On x86 TSO this is a compiler barrier only; no mfence needed.
+	__atomic_thread_fence(__ATOMIC_RELEASE);
 
 	int clone_error = mlibc::sys_clone(new_tcb, &tid, stack);
 	if(!clone_error) {
@@ -235,6 +330,15 @@ int thread_create(struct __mlibc_thread_data **__restrict thread, const struct _
 
 	if(!clone_error) {
 		*thread = reinterpret_cast<struct __mlibc_thread_data *>(new_tcb);
+		// Second RELEASE fence: all post-clone parent-side stores (tid write,
+		// signal mask restoration, scheduler attr setup) must be globally visible
+		// BEFORE the child is unparked via startGate.  The child observes
+		// startGate with ACQUIRE, creating a happens-before edge to this fence
+		// and everything the parent wrote before it — including the tid field.
+		// Without this fence, a compiler (or a weakly-ordered arch) may reorder
+		// the tid RELEASE store after the startGate RELEASE store, causing the
+		// child to see startGate=1 but still read tid=0 from its ACQUIRE load.
+		__atomic_thread_fence(__ATOMIC_RELEASE);
 		__atomic_store_n(&new_tcb->startGate, 1, __ATOMIC_RELEASE);
 		mlibc::sys_futex_wake(&new_tcb->startGate);
 	}
@@ -282,10 +386,6 @@ int thread_join(struct __mlibc_thread_data *thread, void *ret) {
 		int observedTid = __atomic_load_n(&tcb->tid, __ATOMIC_ACQUIRE);
 		if(!observedTid)
 			break;
-#ifndef SYS_SETTIDID
-		if(__atomic_load_n(&tcb->didExit, __ATOMIC_ACQUIRE))
-			break;
-#endif
 		mlibc::sys_futex_wait(&tcb->tid, observedTid, nullptr);
 	}
 
@@ -296,14 +396,9 @@ int thread_join(struct __mlibc_thread_data *thread, void *ret) {
 
 	// Free the joined thread stack when mlibc allocated it.
 	if ((observedFlags & kStackOwnedBit) && tcb->stackAddr && tcb->stackSize) {
-		size_t map_size = tcb->stackSize + tcb->guardSize;
-		if (int e = mlibc::sys_vm_unmap(tcb->stackAddr, map_size); e) {
+		if (int e = release_owned_thread_stack(tcb); e) {
 			mlibc::infoLogger() << "mlibc: thread_join() failed to unmap stack, errno="
 					<< e << frg::endlog;
-		} else {
-			tcb->stackAddr = nullptr;
-			tcb->stackSize = 0;
-			tcb->guardSize = 0;
 		}
 	}
 
@@ -387,15 +482,26 @@ __attribute__ ((__noreturn__)) void thread_exit(thread_exit_return ret_val) {
 		self->returnValue.intVal = ret_val.integer;
 
 	__atomic_store_n(&self->didExit, 1, __ATOMIC_RELEASE);
+#ifndef SYS_SETTIDID
 	sys_futex_wake(&self->didExit);
+#endif
 
 	// Wake any thread_join waiters sitting on &self->tid so they can observe
-	// didExit == 1.  Do NOT zero self->tid here: the exiting thread is still
-	// running on its stack through do_exit(), and freeing the stack before the
-	// kernel syscall completes would be a use-after-free.  Fatal-signal exits
-	// (that never call thread_exit) still rely on CLONE_CHILD_CLEARTID to zero
-	// tcb->tid.
+	// didExit == 1 on sysdeps that use the userspace didExit fallback.
+	//
+	// UnifiedOS defines SYS_SETTIDID and intentionally requires pthread_join()
+	// to wait for the kernel-owned CLONE_CHILD_CLEARTID zeroing before the
+	// joined stack is reclaimable. In that mode, a userspace wake on &self->tid
+	// before the kernel clears it is just a spurious early wake and can make the
+	// joiner re-enter the futex path ahead of the kernel's terminal publication.
+	//
+	// Do NOT zero self->tid here: the exiting thread is still running on its
+	// stack through do_exit(), and freeing the stack before the kernel syscall
+	// completes would be a use-after-free. Fatal-signal exits (that never call
+	// thread_exit) still rely on CLONE_CHILD_CLEARTID to zero tcb->tid.
+#ifndef SYS_SETTIDID
 	sys_futex_wake(&self->tid);
+#endif
 
 	// TODO: clean up thread resources when we are detached.
 
@@ -477,7 +583,7 @@ int thread_mutex_init(struct __mlibc_mutex *__restrict mutex,
 int thread_mutex_destroy(struct __mlibc_mutex *mutex) {
 	if (!mutex)
 		return 0;
-	if(mutex->__mlibc_state)
+	if(__atomic_load_n(&mutex->__mlibc_state, __ATOMIC_ACQUIRE))
 		return EBUSY;
 	return 0;
 }
@@ -610,7 +716,11 @@ int thread_mutex_unlock(struct __mlibc_mutex *mutex) {
 	// state to 0 here, a fresh contender can grab the mutex before the woken
 	// waiter runs and erase the only signal that sleepers still exist.
 	unsigned int unlocked_state = (state & mutex_waiters_bit) ? mutex_waiters_bit : 0;
-	state = __atomic_exchange_n(&mutex->__mlibc_state, unlocked_state, __ATOMIC_RELEASE);
+	// Save the state address into a local BEFORE the atomic exchange so that
+	// futex_wake and compare_exchange use a stable pointer even after the mutex
+	// has been released and potentially destroyed by another thread.
+	int *stateAddr = reinterpret_cast<int *>(&mutex->__mlibc_state);
+	state = __atomic_exchange_n(stateAddr, unlocked_state, __ATOMIC_RELEASE);
 
 	// After this point the mutex is unlocked, and therefore we cannot access its contents as it
 	// may have been destroyed by another thread.
@@ -621,11 +731,11 @@ int thread_mutex_unlock(struct __mlibc_mutex *mutex) {
 		// Preserve wake-one handoff for contended mutexes. A waiter that
 		// acquires the mutex keeps mutex_waiters_bit set so the next unlock
 		// continues waking the remaining sleepers instead of stranding them.
-		int e = mlibc::sys_futex_wake((int *)&mutex->__mlibc_state);
+		int e = mlibc::sys_futex_wake(stateAddr);
 		__ensure(e >= 0 || e == EACCES || e == EINVAL);
 		if(e == 0) {
 			unsigned int expected = mutex_waiters_bit;
-			__atomic_compare_exchange_n(&mutex->__mlibc_state,
+			__atomic_compare_exchange_n(reinterpret_cast<unsigned int *>(stateAddr),
 					&expected, 0u, false, __ATOMIC_RELEASE, __ATOMIC_RELAXED);
 		}
 	}

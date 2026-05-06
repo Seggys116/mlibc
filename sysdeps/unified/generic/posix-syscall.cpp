@@ -25,6 +25,18 @@ extern "C" long __mlibc_posix_syscall_ret_helper(long ret) {
 
 #if defined(__x86_64__)
 extern "C" __attribute__((naked)) long syscall(long number, ...) {
+    /* C-callable variadic syscall(). The SysV variadic ABI does not preserve
+     * unused argument registers — for syscall(N, x) the compiler sets %rdi
+     * (number) and %rsi (x), leaving %rdx/%rcx/%r8/%r9 with unspecified
+     * (residual) values. We can't tell the actual arity at runtime, so this
+     * function necessarily passes those residuals to the kernel.
+     *
+     * The C++ macro in <sys/syscall.h> dispatches to fixed-arity helpers
+     * (__mlibc_posix_syscall1 → syscalln1) which DO zero unused argument
+     * slots and is the recommended call path for syscalls that multiplex on
+     * arg1 (e.g. SYS_SETTIDID / set_tid_address). C-only callers must use
+     * the dedicated POSIX wrappers (e.g. set_tid_address(p)) rather than
+     * variadic syscall() for the same reason. */
     __asm__ volatile(
         // Keep the stack 16-byte aligned across the helper call. Our extended
         // kernel ABI also accepts a 7th syscall argument in r12.

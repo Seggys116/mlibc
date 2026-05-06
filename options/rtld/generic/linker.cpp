@@ -1418,8 +1418,9 @@ Tcb *allocateTcb() {
 
 	// To make sure that both the TCB and TLS data are sufficiently aligned, allocate
 	// slightly more than necessary and adjust alignment afterwards.
+	size_t tcbSize = sizeof(Tcb);
 	size_t alignOverhead = frg::max(alignof(Tcb), tlsMaxAlignment);
-	size_t allocSize = tlsInitialSize + sizeof(Tcb) + alignOverhead;
+	size_t allocSize = tlsInitialSize + tcbSize + alignOverhead;
 	auto allocation = reinterpret_cast<uintptr_t>(getAllocator().allocate(allocSize));
 	memset(reinterpret_cast<void *>(allocation), 0, allocSize);
 
@@ -1432,14 +1433,14 @@ Tcb *allocateTcb() {
 		// To do this, we will fix whichever address has stricter alignment requirements, and
 		// derive the other from it.
 		if (tlsMaxAlignment > alignof(Tcb)) {
-			tlsAddress = alignUp(allocation + sizeof(Tcb), tlsMaxAlignment);
-			tcbAddress = tlsAddress - sizeof(Tcb);
+			tlsAddress = alignUp(allocation + tcbSize, tlsMaxAlignment);
+			tcbAddress = tlsAddress - tcbSize;
 		} else {
 			tcbAddress = alignUp(allocation, alignof(Tcb));
-			tlsAddress = tcbAddress + sizeof(Tcb);
+			tlsAddress = tcbAddress + tcbSize;
 		}
 		__ensure((tlsAddress & (tlsMaxAlignment - 1)) == 0);
-		__ensure(tlsAddress == tcbAddress + sizeof(Tcb));
+		__ensure(tlsAddress == tcbAddress + tcbSize);
 	} else {
 		// The TCB should be aligned such that the preceding blocks are aligned too.
 		tcbAddress = alignUp(allocation + tlsInitialSize, alignOverhead);
@@ -1449,7 +1450,7 @@ Tcb *allocateTcb() {
 
 	if (rtldConfig.debugVerbose) {
 		mlibc::infoLogger() << "rtld: tcb allocated at " << (void *)tcbAddress
-				<< ", size = 0x" << frg::hex_fmt{sizeof(Tcb)} << frg::endlog;
+				<< ", size = 0x" << frg::hex_fmt{tcbSize} << frg::endlog;
 		mlibc::infoLogger() << "rtld: tls allocated at " << (void *)tlsAddress
 				<< ", size = 0x" << frg::hex_fmt{tlsInitialSize} << frg::endlog;
 	}

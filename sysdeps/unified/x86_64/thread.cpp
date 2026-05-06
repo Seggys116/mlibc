@@ -34,8 +34,15 @@ int sys_prepare_stack(
 	size_t effective_guard = align_up(*guard_size);
 
 	if (*stack) {
-		*stack_base = *stack;
-		*guard_size = 0;
+		bool cached_stack =
+		    stack_base && *stack_base == *stack && effective_guard != 0;
+		if (cached_stack) {
+			*guard_size = effective_guard;
+		} else {
+			*stack_base = *stack;
+			*guard_size = 0;
+			effective_guard = 0;
+		}
 	} else {
 		size_t map_size = *stack_size + effective_guard;
 		*stack_base =
