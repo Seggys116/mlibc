@@ -16,6 +16,8 @@
 #define SYS_get_mempolicy SYS_GET_MEMPOLICY
 #define SYS_membarrier SYS_MEMBARRIER
 #define SYS_getcpu SYS_GETCPU
+#define SYS_getgroups SYS_GETGROUPS
+#define SYS_setgroups SYS_SETGROUPS
 #define SYS_memfd_create SYS_MEMFD_CREATE
 #define SYS_fallocate SYS_FALLOCATE
 #define SYS_fadvise64 SYS_FADVISE
@@ -42,6 +44,8 @@
 #define __NR_futex_time64  SYS_FUTEX_WAIT
 #define __NR_membarrier    SYS_MEMBARRIER
 #define __NR_getcpu        SYS_GETCPU
+#define __NR_getgroups     SYS_GETGROUPS
+#define __NR_setgroups     SYS_SETGROUPS
 #define __NR_set_tid_address SYS_SETTIDID
 #define __NR_set_robust_list SYS_SETTIDID
 #define __NR_tgkill        SYS_TGKILL

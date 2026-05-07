@@ -774,12 +774,13 @@ int sys_setresgid(gid_t rgid, gid_t egid, gid_t sgid) {
 	return 0;
 }
 
-int sys_getgroups(int gidsetsize, gid_t *grouplist) {
-	long ret = syscall(SYS_GETGROUPS, gidsetsize, grouplist);
+int sys_getgroups(size_t size, gid_t *list, int *out) {
+	long ret = syscall(SYS_GETGROUPS, size, list);
 	if (ret < 0) {
 		return -ret;
 	}
-	return ret;
+	*out = static_cast<int>(ret);
+	return 0;
 }
 
 int sys_setgroups(size_t gidsetsize, const gid_t *grouplist) {
