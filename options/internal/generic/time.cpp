@@ -130,6 +130,16 @@ size_t strftime(
 			c++;
 			break;
 		}
+		case 's': {
+			struct tm tm_copy = *tm;
+			time_t seconds = timegm(&tm_copy) - tm->tm_gmtoff;
+			chunk = snprintf(p, space, "%ld", seconds);
+			if(chunk >= space)
+				return 0;
+			p += chunk;
+			c++;
+			break;
+		}
 		case 'R': {
 			chunk = snprintf(p, space, "%.2i:%.2i", tm->tm_hour, tm->tm_min);
 			if(chunk >= space)
@@ -364,8 +374,14 @@ size_t strftime(
 			p += chunk;
 			break;
 		}
-		default:
-			mlibc::panicLogger() << "mlibc: strftime unknown format type: " << c << frg::endlog;
+		default: {
+			chunk = snprintf(p, space, "%%%c", *c);
+			if(chunk >= space)
+				return 0;
+			p += chunk;
+			c++;
+			break;
+		}
 		}
 	}
 

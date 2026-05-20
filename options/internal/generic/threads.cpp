@@ -128,8 +128,10 @@ static int release_owned_thread_stack(Tcb *tcb) {
 
 	int result = 0;
 	size_t map_size = tcb->stackSize + tcb->guardSize;
+	void *map_base = reinterpret_cast<void *>(
+			reinterpret_cast<uintptr_t>(tcb->stackAddr) - tcb->guardSize);
 	if(!try_cache_thread_stack(tcb->stackAddr, tcb->stackSize, tcb->guardSize))
-		result = mlibc::sys_vm_unmap(tcb->stackAddr, map_size);
+		result = mlibc::sys_vm_unmap(map_base, map_size);
 
 	if(!result) {
 		tcb->stackAddr = nullptr;

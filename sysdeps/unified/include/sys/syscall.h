@@ -22,6 +22,7 @@
 #define SYS_fallocate SYS_FALLOCATE
 #define SYS_fadvise64 SYS_FADVISE
 #define SYS_fdatasync SYS_FDATASYNC
+#define SYS_utimensat SYS_UTIMENSAT
 #define SYS_mincore SYS_MINCORE
 #define SYS_futex_time64 SYS_FUTEX_WAIT
 #define SYS_set_tid_address SYS_SETTIDID
@@ -54,6 +55,8 @@
 #define __NR_clone         SYS_CLONE
 #define __NR_exit         SYS_EXIT
 #define __NR_exit_group   SYS_EXIT_GROUP
+#define __NR_utimensat    SYS_UTIMENSAT
+#define __NR_utimensat_time64 SYS_UTIMENSAT
 #define __NR_fadvise64     SYS_FADVISE
 #define __NR_fdatasync     SYS_FDATASYNC
 #define __NR_mincore       SYS_MINCORE

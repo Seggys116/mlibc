@@ -4,6 +4,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -19,6 +20,48 @@
 #include <mlibc/posix-sysdeps.hpp>
 #include <mlibc/rtld-config.hpp>
 #include <mlibc/global-config.hpp>
+
+namespace {
+
+constexpr char tempnameAlphabet[] =
+	"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+
+uint64_t mixTempnameSeed(uint64_t value) {
+	value += 0x9E3779B97F4A7C15ull;
+	value = (value ^ (value >> 30)) * 0xBF58476D1CE4E5B9ull;
+	value = (value ^ (value >> 27)) * 0x94D049BB133111EBull;
+	return value ^ (value >> 31);
+}
+
+uint64_t nextTempnameSeed(size_t attempt) {
+	static uint64_t counter;
+	uint64_t sequence = __atomic_add_fetch(&counter, 1ULL, __ATOMIC_ACQ_REL);
+	uint64_t seed = sequence ^ (attempt * 0xD1B54A32D192ED03ull);
+
+	uint64_t entropy = 0;
+	if(mlibc::sys_getentropy && !mlibc::sys_getentropy(&entropy, sizeof(entropy)))
+		seed ^= entropy;
+
+	time_t secs = 0;
+	long nanos = 0;
+	if(!mlibc::sys_clock_get(CLOCK_REALTIME, &secs, &nanos))
+		seed ^= (static_cast<uint64_t>(secs) << 32) ^ static_cast<uint64_t>(nanos);
+
+	if(mlibc::sys_getpid)
+		seed ^= static_cast<uint64_t>(mlibc::sys_getpid()) << 17;
+
+	seed ^= reinterpret_cast<uintptr_t>(&counter);
+	return mixTempnameSeed(seed);
+}
+
+void fillTempnameSuffix(char *suffix, uint64_t seed) {
+	for(size_t i = 0; i < 6; i++) {
+		suffix[i] = tempnameAlphabet[seed % (sizeof(tempnameAlphabet) - 1)];
+		seed /= (sizeof(tempnameAlphabet) - 1);
+	}
+}
+
+} // namespace
 
 // Borrowed from musl
 static uint32_t init[] = {
@@ -200,7 +243,6 @@ int mkstemps(char *pattern, int suffixlen) {
 }
 
 char *mkdtemp(char *pattern) {
-	mlibc::infoLogger() << "mlibc mkdtemp(" << pattern << ") called" << frg::endlog;
 	auto n = strlen(pattern);
 	__ensure(n >= 6);
 	if(n < 6) {
@@ -214,9 +256,8 @@ char *mkdtemp(char *pattern) {
 		return nullptr;
 	}
 
-	// TODO: Do an exponential search.
 	for(size_t i = 0; i < 999999; i++) {
-		__ensure(sprintf(pattern + (n - 6), "%06zu", i) == 6);
+		fillTempnameSuffix(pattern + (n - 6), nextTempnameSeed(i));
 		if(int e = mlibc::sys_mkdir(pattern, S_IRWXU); !e) {
 			return pattern;
 		}else if(e != EEXIST) {

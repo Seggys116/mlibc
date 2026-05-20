@@ -32,37 +32,42 @@ int sys_prepare_stack(
 	*stack_size = align_up(*stack_size);
 
 	size_t effective_guard = align_up(*guard_size);
+	void *usable_base = nullptr;
 
 	if (*stack) {
 		bool cached_stack =
 		    stack_base && *stack_base == *stack && effective_guard != 0;
 		if (cached_stack) {
+			usable_base = *stack_base;
 			*guard_size = effective_guard;
 		} else {
 			*stack_base = *stack;
 			*guard_size = 0;
 			effective_guard = 0;
+			usable_base = *stack_base;
 		}
 	} else {
 		size_t map_size = *stack_size + effective_guard;
-		*stack_base =
+		void *map_base =
 		    mmap(nullptr, map_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-		if (*stack_base == MAP_FAILED) {
+		if (map_base == MAP_FAILED) {
 			return errno;
 		}
 		if (effective_guard) {
-			if (mprotect(*stack_base, effective_guard, PROT_NONE)) {
+			if (mprotect(map_base, effective_guard, PROT_NONE)) {
 				int e = errno;
-				munmap(*stack_base, map_size);
+				munmap(map_base, map_size);
 				*stack_base = nullptr;
 				return e;
 			}
 		}
+		usable_base = reinterpret_cast<void *>(reinterpret_cast<uintptr_t>(map_base) + effective_guard);
+		*stack_base = usable_base;
 		*guard_size = effective_guard;
 	}
 
 	uintptr_t *sp =
-	    reinterpret_cast<uintptr_t *>(reinterpret_cast<uintptr_t>(*stack_base) + *guard_size + *stack_size);
+	    reinterpret_cast<uintptr_t *>(reinterpret_cast<uintptr_t>(usable_base) + *stack_size);
 
 	*--sp = reinterpret_cast<uintptr_t>(tcb);
 	*--sp = reinterpret_cast<uintptr_t>(user_arg);

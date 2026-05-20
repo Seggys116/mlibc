@@ -37,6 +37,38 @@ namespace {
 
 constexpr bool logExecvpeTries = false;
 
+long queryPathconf(int name, bool &supported) {
+	supported = true;
+
+	switch(name) {
+	case _PC_LINK_MAX:
+		return _POSIX_LINK_MAX;
+	case _PC_MAX_CANON:
+		return _POSIX_MAX_CANON;
+	case _PC_MAX_INPUT:
+		return _POSIX_MAX_INPUT;
+	case _PC_NAME_MAX:
+		return NAME_MAX;
+	case _PC_PATH_MAX:
+		return PATH_MAX;
+	case _PC_PIPE_BUF:
+		return PIPE_BUF;
+	case _PC_CHOWN_RESTRICTED:
+		return 1;
+	case _PC_NO_TRUNC:
+		return 1;
+	case _PC_VDISABLE:
+		return _POSIX_VDISABLE;
+	case _PC_FILESIZEBITS:
+		return FILESIZEBITS;
+	case _PC_SYMLINK_MAX:
+		return _POSIX_SYMLINK_MAX;
+	default:
+		supported = false;
+		return -1;
+	}
+}
+
 } // namespace
 
 namespace mlibc {
@@ -276,12 +308,10 @@ int fexecve(int, char *const [], char *const []) {
 }
 
 long fpathconf(int, int name) {
-	switch (name) {
-	case _PC_NAME_MAX:
-		return NAME_MAX;
-	case _PC_FILESIZEBITS:
-		return FILESIZEBITS;
-	default:
+	bool supported = false;
+	if(auto value = queryPathconf(name, supported); supported)
+		return value;
+	else {
 		mlibc::infoLogger() << "missing fpathconf() entry " << name << frg::endlog;
 		errno = EINVAL;
 		return -1;
@@ -642,12 +672,10 @@ int nice(int nice) {
 }
 
 long pathconf(const char *, int name) {
-	switch (name) {
-	case _PC_NAME_MAX:
-		return NAME_MAX;
-	case _PC_FILESIZEBITS:
-		return FILESIZEBITS;
-	default:
+	bool supported = false;
+	if(auto value = queryPathconf(name, supported); supported)
+		return value;
+	else {
 		mlibc::infoLogger() << "missing pathconf() entry " << name << frg::endlog;
 		errno = EINVAL;
 		return -1;

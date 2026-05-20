@@ -174,11 +174,15 @@ int sys_anon_free(void *pointer, size_t size) {
 void sys_libc_panic(){
 	sys_libc_log("libc panic!");
 	// Match abort() semantics:
-	// 1) Raise SIGABRT.
+	// 1) Unblock and raise SIGABRT.
 	// 2) If a handler returns or SIGABRT was ignored, reset to default and raise again.
 	// 3) If still alive, fall back to _Exit(127).
 	pid_t pid = syscall(SYS_GETPID);
 	if (pid > 0) {
+		sigset_t set = {};
+		set.__sig[(SIGABRT - 1) / (8 * sizeof(unsigned long))] =
+		    1UL << ((SIGABRT - 1) % (8 * sizeof(unsigned long)));
+		(void)syscall(SYS_SIGPROCMASK, SIG_UNBLOCK, (uintptr_t)&set, 0);
 		(void)syscall(SYS_KILL, pid, SIGABRT);
 
 		struct sigaction sa = {};
@@ -186,6 +190,10 @@ void sys_libc_panic(){
 		sa.sa_flags = 0;
 		(void)syscall(SYS_SIGNAL_ACTION, SIGABRT, (uintptr_t)&sa, 0);
 
+		memset(&set, 0xff, sizeof(set));
+		set.__sig[(SIGABRT - 1) / (8 * sizeof(unsigned long))] &=
+		    ~(1UL << ((SIGABRT - 1) % (8 * sizeof(unsigned long))));
+		(void)syscall(SYS_SIGPROCMASK, SIG_SETMASK, (uintptr_t)&set, 0);
 		(void)syscall(SYS_KILL, pid, SIGABRT);
 	}
 
@@ -691,6 +699,14 @@ int sys_getsid(pid_t pid, pid_t *sid) {
 		return -ret;
 	}
 	if (sid) *sid = ret;
+	return 0;
+}
+
+int sys_reboot(int cmd) {
+	long ret = syscall(SYS_REBOOT, cmd);
+	if (ret < 0) {
+		return -ret;
+	}
 	return 0;
 }
 

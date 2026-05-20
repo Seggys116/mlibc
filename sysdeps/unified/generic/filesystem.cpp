@@ -31,6 +31,12 @@ typedef struct {
 	off_t st_size;
 	int64_t st_blksize;
 	int64_t st_blocks;
+	int64_t st_atime_sec;
+	int64_t st_atime_nsec;
+	int64_t st_mtime_sec;
+	int64_t st_mtime_nsec;
+	int64_t st_ctime_sec;
+	int64_t st_ctime_nsec;
 } unified_stat_t;
 
 int sys_write(int fd, const void* buffer, size_t count, ssize_t* written){
@@ -164,18 +170,12 @@ int sys_stat(fsfd_target fsfdt, int fd, const char *path, int flags, struct stat
 	statbuf->st_size = unifiedStat.st_size;
 	statbuf->st_blksize = unifiedStat.st_blksize;
 	statbuf->st_blocks = unifiedStat.st_blocks;
-
-	// Unified kernel stat payload does not currently carry timestamps.
-	// Populate with wall-clock time so tools like ls do not display 1970.
-	long now = syscall(SYS_TIME, 0);
-	if(now < 0)
-		now = 0;
-	statbuf->st_atim.tv_sec = now;
-	statbuf->st_atim.tv_nsec = 0;
-	statbuf->st_mtim.tv_sec = now;
-	statbuf->st_mtim.tv_nsec = 0;
-	statbuf->st_ctim.tv_sec = now;
-	statbuf->st_ctim.tv_nsec = 0;
+	statbuf->st_atim.tv_sec = unifiedStat.st_atime_sec;
+	statbuf->st_atim.tv_nsec = unifiedStat.st_atime_nsec;
+	statbuf->st_mtim.tv_sec = unifiedStat.st_mtime_sec;
+	statbuf->st_mtim.tv_nsec = unifiedStat.st_mtime_nsec;
+	statbuf->st_ctim.tv_sec = unifiedStat.st_ctime_sec;
+	statbuf->st_ctim.tv_nsec = unifiedStat.st_ctime_nsec;
 
 	// Some filesystems report 0 for directory size; provide a standard
 	// directory size so long-format ls output is more useful.
@@ -384,7 +384,7 @@ int sys_dup2(int fd, int flags, int newfd){
 }
 
 typedef struct unified_dirent {
-	uint32_t inode; // Inode number
+	ino_t inode; // Inode number
 	uint32_t type;
 	char name[NAME_MAX]; // Filename
 } unified_dirent_t;
@@ -854,7 +854,11 @@ int sys_symlinkat(const char *target, int newdirfd, const char *linkpath)
 
 int sys_utimensat(int dirfd, const char *pathname, const struct timespec times[2], int flags)
 {
-    long ret = syscall(SYS_UTIMENSAT, dirfd, pathname, times, flags);
+    long ret = syscalln4(SYS_UTIMENSAT,
+                         static_cast<uint64_t>(dirfd),
+                         reinterpret_cast<uint64_t>(pathname),
+                         reinterpret_cast<uint64_t>(times),
+                         static_cast<uint64_t>(flags));
     if (ret < 0) {
         return -ret;
     }

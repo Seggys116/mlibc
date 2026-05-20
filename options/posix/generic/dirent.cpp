@@ -20,9 +20,14 @@ int alphasort(const struct dirent **a, const struct dirent **b) {
 }
 
 int closedir(DIR *dir) {
-	// TODO: Deallocate the dir structure.
-	close(dir->__handle);
-	return 0;
+	if(!dir) {
+		errno = EINVAL;
+		return -1;
+	}
+
+	int ret = close(dir->__handle);
+	frg::destruct(getAllocator(), dir);
+	return ret;
 }
 int dirfd(DIR *dir) {
 	return dir->__handle;
@@ -177,12 +182,18 @@ int scandir(const char *path, struct dirent ***res, int (*select)(const struct d
 	}
 
 	if(errno) {
+		int scan_errno = errno;
 		if(array)
 			while(count-- > 0)
 				free(array[count]);
 		free(array);
+		closedir(dir);
+		errno = scan_errno;
 		return -1;
 	}
+
+	if(closedir(dir))
+		return -1;
 
 	// from here we can set the old errno back
 	errno = old_errno;

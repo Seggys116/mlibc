@@ -207,6 +207,7 @@
 #define SYS_SIGQUEUE           204
 #define SYS_TGSIGQUEUE         205
 #define SYS_WAIT4              206
+#define SYS_REBOOT             207
 
 #ifdef __cplusplus
 extern "C"{
