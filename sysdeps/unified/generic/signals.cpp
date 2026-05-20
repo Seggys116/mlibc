@@ -11,7 +11,7 @@ namespace mlibc{
 
 int Sysdeps<Sigprocmask>::operator()(int how, const sigset_t *__restrict set,
 	sigset_t *__restrict retrieve){
-    int ret = syscall(SYS_SIGPROCMASK, how, set, retrieve);
+    int ret = syscall(SYS_SIGPROCMASK, how, set, retrieve, sizeof(sigset_t));
     if(ret < 0){
         return -ret;
     }
@@ -21,7 +21,7 @@ int Sysdeps<Sigprocmask>::operator()(int how, const sigset_t *__restrict set,
 
 int Sysdeps<Sigaction>::operator()(int signal, const struct sigaction *__restrict action,
 	struct sigaction *__restrict oldAction) {
-    int ret = syscall(SYS_SIGNAL_ACTION, signal, action, oldAction);
+    int ret = syscall(SYS_SIGNAL_ACTION, signal, action, oldAction, sizeof(sigset_t));
     if(ret < 0){
         return -ret;
     }
@@ -39,7 +39,7 @@ int Sysdeps<Kill>::operator()(int pid, int signal){
 }
 
 int Sysdeps<Sigsuspend>::operator()(const sigset_t *set) {
-    int ret = syscall(SYS_SIGSUSPEND, (uint64_t)set);
+    int ret = syscall(SYS_SIGSUSPEND, (uint64_t)set, sizeof(sigset_t));
     if(ret < 0){
         return -ret;
     }
@@ -47,9 +47,10 @@ int Sysdeps<Sigsuspend>::operator()(const sigset_t *set) {
 }
 
 int Sysdeps<Pause>::operator()() {
-    // Pass nullptr to sigsuspend: the kernel will block with the current mask
-    // unchanged and return -EINTR when any deliverable signal arrives.
-    return Sysdeps<Sigsuspend>::operator()(nullptr);
+    long ret = syscall(SYS_PAUSE);
+    if(ret < 0)
+        return -ret;
+    return 0;
 }
 
 int Sysdeps<Sigaltstack>::operator()(const stack_t *ss, stack_t *oss) {
@@ -60,7 +61,7 @@ int Sysdeps<Sigaltstack>::operator()(const stack_t *ss, stack_t *oss) {
 }
 
 int Sysdeps<Sigpending>::operator()(sigset_t *set) {
-    long ret = syscall(SYS_SIGPENDING, (uintptr_t)set);
+    long ret = syscall(SYS_SIGPENDING, (uintptr_t)set, sizeof(sigset_t));
     if (ret < 0)
         return -ret;
     return 0;
@@ -75,7 +76,8 @@ int Sysdeps<Tgkill>::operator()(int tgid, int tid, int sig) {
 
 int Sysdeps<Sigtimedwait>::operator()(const sigset_t *__restrict set, siginfo_t *__restrict info,
     const struct timespec *__restrict timeout, int *out_signal) {
-    long ret = syscall(SYS_SIGTIMEDWAIT, (uintptr_t)set, (uintptr_t)info, (uintptr_t)timeout);
+    long ret = syscall(SYS_SIGTIMEDWAIT, (uintptr_t)set, (uintptr_t)info,
+                       (uintptr_t)timeout, sizeof(sigset_t));
     if (ret < 0)
         return -ret;
     // ret is the signal number on success

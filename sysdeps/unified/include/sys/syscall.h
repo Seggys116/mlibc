@@ -10,61 +10,7 @@
 #include <unified/syscall.h>
 #undef UNIFIED_NO_SYSCALL_MACRO
 
-/* Map Linux syscall names (lowercase) to Unified syscall numbers (uppercase) */
-#define SYS_gettid SYS_GETTID
-#define SYS_futex SYS_FUTEX_WAIT
-#define SYS_get_mempolicy SYS_GET_MEMPOLICY
-#define SYS_membarrier SYS_MEMBARRIER
-#define SYS_getcpu SYS_GETCPU
-#define SYS_getgroups SYS_GETGROUPS
-#define SYS_setgroups SYS_SETGROUPS
-#define SYS_memfd_create SYS_MEMFD_CREATE
-#define SYS_fallocate SYS_FALLOCATE
-#define SYS_fadvise64 SYS_FADVISE
-#define SYS_fdatasync SYS_FDATASYNC
-#define SYS_utimensat SYS_UTIMENSAT
-#define SYS_mincore SYS_MINCORE
-#define SYS_futex_time64 SYS_FUTEX_WAIT
-#define SYS_set_tid_address SYS_SETTIDID
-#define SYS_set_robust_list SYS_SETTIDID
-
-/* SYS_* lowercase aliases for Linux-compatible code */                                                                                      
-#define SYS_epoll_create SYS_EPOLL_CREATE                                                                                             
-#define SYS_epoll_ctl    SYS_EPOLL_CTL                                                                                                       
-#define SYS_epoll_wait   SYS_EPOLL_WAIT                                                                                               
-#define SYS_tgkill       SYS_TGKILL                                                                                                   
-#define SYS_rt_sigqueueinfo SYS_SIGQUEUE
-#define SYS_rt_tgsigqueueinfo SYS_TGSIGQUEUE
-#define SYS_exit         SYS_EXIT
-#define SYS_exit_group   SYS_EXIT_GROUP
-                                                                                                                                      
-/* __NR_* aliases for code that uses the Linux syscall-number naming convention.
- * These map to the Unified OS kernel's actual syscall numbers. */
-#define __NR_gettid        SYS_GETTID
-#define __NR_futex         SYS_FUTEX_WAIT
-#define __NR_futex_time64  SYS_FUTEX_WAIT
-#define __NR_membarrier    SYS_MEMBARRIER
-#define __NR_getcpu        SYS_GETCPU
-#define __NR_getgroups     SYS_GETGROUPS
-#define __NR_setgroups     SYS_SETGROUPS
-#define __NR_set_tid_address SYS_SETTIDID
-#define __NR_set_robust_list SYS_SETTIDID
-#define __NR_tgkill        SYS_TGKILL
-#define __NR_rt_sigqueueinfo SYS_SIGQUEUE
-#define __NR_rt_tgsigqueueinfo SYS_TGSIGQUEUE
-#define __NR_clone         SYS_CLONE
-#define __NR_exit         SYS_EXIT
-#define __NR_exit_group   SYS_EXIT_GROUP
-#define __NR_utimensat    SYS_UTIMENSAT
-#define __NR_utimensat_time64 SYS_UTIMENSAT
-#define __NR_fadvise64     SYS_FADVISE
-#define __NR_fdatasync     SYS_FDATASYNC
-#define __NR_mincore       SYS_MINCORE
-#define __NR_epoll_create  SYS_EPOLL_CREATE
-#define __NR_epoll_create1 SYS_EPOLL_CREATE
-#define __NR_epoll_ctl     SYS_EPOLL_CTL
-#define __NR_epoll_wait    SYS_EPOLL_WAIT
-#define __NR_epoll_pwait   SYS_EPOLL_WAIT
+/* Linux-style __NR_* and SYS_lowercase names come from <unified/syscall.h>. */
 
 /* POSIX-compatible syscall(): returns -1 and sets errno on failure, like glibc */
 #ifdef __cplusplus

@@ -42,8 +42,8 @@ extern "C" __attribute__((naked)) long syscall(long number, ...) {
         // kernel ABI also accepts a 7th syscall argument in r12.
         "push %r12\n\t"
         "mov %rdi, %rax\n\t"
-        "mov 16(%rsp), %r11\n\t"
-        "mov 24(%rsp), %r12\n\t"
+        "mov %r9, %r11\n\t"
+        "mov 16(%rsp), %r9\n\t"
         "mov %rsi, %rdi\n\t"
         "mov %rdx, %rsi\n\t"
         "mov %rcx, %rdx\n\t"

@@ -4,7 +4,6 @@
 #include <sys/ioctl.h>
 #include <sys/types.h>
 #include <sys/stat.h>
-#include <sys/sysmacros.h>
 #if __MLIBC_LINUX_OPTION
 #include <sys/statfs.h>
 #endif
@@ -13,6 +12,7 @@
 #include <limits.h>
 #include <fcntl.h>
 #include <string.h>
+#include <stdint.h>
 
 #include <bits/ensure.h>
 #include <mlibc/all-sysdeps.hpp>
@@ -21,13 +21,14 @@
 namespace mlibc{
 
 typedef struct {
-	dev_t st_dev;
-	ino_t st_ino;
-	mode_t st_mode;
-	nlink_t st_nlink;
-	uid_t st_uid;
-	gid_t st_gid;
-	dev_t st_rdev;
+	uint64_t st_dev;
+	uint64_t st_ino;
+	uint64_t st_nlink;
+	uint32_t st_mode;
+	uint32_t st_uid;
+	uint32_t st_gid;
+	uint32_t __pad0;
+	uint64_t st_rdev;
 	off_t st_size;
 	int64_t st_blksize;
 	int64_t st_blocks;
@@ -37,7 +38,8 @@ typedef struct {
 	int64_t st_mtime_nsec;
 	int64_t st_ctime_sec;
 	int64_t st_ctime_nsec;
-} unified_stat_t;
+	int64_t __unused[3];
+} linux_kernel_stat_t;
 
 int Sysdeps<Write>::operator()(int fd, const void* buffer, size_t count, ssize_t* written){
 	long ret = syscall(SYS_WRITE, fd, (uintptr_t)buffer, count);
@@ -136,19 +138,19 @@ int Sysdeps<Access>::operator()(const char* filename, int mode){
 int Sysdeps<Stat>::operator()(fsfd_target fsfdt, int fd, const char *path, int flags, struct stat *statbuf){
 	long ret = 0;
 
-	unified_stat_t unifiedStat;
+	linux_kernel_stat_t kernelStat;
 	switch(fsfdt){
 		case fsfd_target::fd:
-			ret = syscall(SYS_FSTAT, &unifiedStat, fd);
+			ret = syscall(SYS_FSTAT, fd, &kernelStat);
 			break;
 		case fsfd_target::path:
 			if (flags & AT_SYMLINK_NOFOLLOW)
-				ret = syscall(SYS_LSTAT, &unifiedStat, path);
+				ret = syscall(SYS_LSTAT, path, &kernelStat);
 			else
-				ret = syscall(SYS_STAT, &unifiedStat, path);
+				ret = syscall(SYS_STAT, path, &kernelStat);
 			break;
 		case fsfd_target::fd_path:
-			ret = syscall(SYS_FSTATAT, fd, (uintptr_t)path, (uintptr_t)&unifiedStat, flags);
+			ret = syscall(SYS_FSTATAT, fd, (uintptr_t)path, (uintptr_t)&kernelStat, flags);
 			break;
 		default:
 			mlibc::infoLogger() << "mlibc: stat: Unknown fsfd_target: " << (int)fsfdt << frg::endlog;
@@ -160,22 +162,22 @@ int Sysdeps<Stat>::operator()(fsfd_target fsfdt, int fd, const char *path, int f
 	}
 
 	memset(statbuf, 0, sizeof(struct stat));
-	statbuf->st_dev = unifiedStat.st_dev;
-	statbuf->st_ino = unifiedStat.st_ino;
-	statbuf->st_mode = unifiedStat.st_mode;
-	statbuf->st_nlink = unifiedStat.st_nlink;
-	statbuf->st_uid = unifiedStat.st_uid;
-	statbuf->st_gid = unifiedStat.st_gid;
-	statbuf->st_rdev = unifiedStat.st_rdev;
-	statbuf->st_size = unifiedStat.st_size;
-	statbuf->st_blksize = unifiedStat.st_blksize;
-	statbuf->st_blocks = unifiedStat.st_blocks;
-	statbuf->st_atim.tv_sec = unifiedStat.st_atime_sec;
-	statbuf->st_atim.tv_nsec = unifiedStat.st_atime_nsec;
-	statbuf->st_mtim.tv_sec = unifiedStat.st_mtime_sec;
-	statbuf->st_mtim.tv_nsec = unifiedStat.st_mtime_nsec;
-	statbuf->st_ctim.tv_sec = unifiedStat.st_ctime_sec;
-	statbuf->st_ctim.tv_nsec = unifiedStat.st_ctime_nsec;
+	statbuf->st_dev = kernelStat.st_dev;
+	statbuf->st_ino = kernelStat.st_ino;
+	statbuf->st_mode = kernelStat.st_mode;
+	statbuf->st_nlink = kernelStat.st_nlink;
+	statbuf->st_uid = kernelStat.st_uid;
+	statbuf->st_gid = kernelStat.st_gid;
+	statbuf->st_rdev = kernelStat.st_rdev;
+	statbuf->st_size = kernelStat.st_size;
+	statbuf->st_blksize = kernelStat.st_blksize;
+	statbuf->st_blocks = kernelStat.st_blocks;
+	statbuf->st_atim.tv_sec = kernelStat.st_atime_sec;
+	statbuf->st_atim.tv_nsec = kernelStat.st_atime_nsec;
+	statbuf->st_mtim.tv_sec = kernelStat.st_mtime_sec;
+	statbuf->st_mtim.tv_nsec = kernelStat.st_mtime_nsec;
+	statbuf->st_ctim.tv_sec = kernelStat.st_ctime_sec;
+	statbuf->st_ctim.tv_nsec = kernelStat.st_ctime_nsec;
 
 	// Some filesystems report 0 for directory size; provide a standard
 	// directory size so long-format ls output is more useful.
@@ -192,57 +194,9 @@ int Sysdeps<Stat>::operator()(fsfd_target fsfdt, int fd, const char *path, int f
 
 #if __MLIBC_LINUX_OPTION
 int Sysdeps<Statx>::operator()(int dirfd, const char *pathname, int flags, unsigned int mask, struct statx *statxbuf) {
-	if(!statxbuf)
-		return EFAULT;
-
-	if(flags & ~(AT_SYMLINK_NOFOLLOW | AT_EMPTY_PATH | AT_NO_AUTOMOUNT
-			| AT_STATX_SYNC_AS_STAT | AT_STATX_FORCE_SYNC | AT_STATX_DONT_SYNC))
-		return EINVAL;
-
-	if(!(flags & AT_EMPTY_PATH) && (!pathname || !pathname[0]))
-		return ENOENT;
-
-	struct stat statbuf_storage;
-	auto stat_flags = flags & (AT_SYMLINK_NOFOLLOW | AT_EMPTY_PATH);
-	int e = 0;
-
-	if((flags & AT_EMPTY_PATH) && (!pathname || !pathname[0])) {
-		e = mlibc::Sysdeps<Stat>::operator()(fsfd_target::fd, dirfd, nullptr, 0, &statbuf_storage);
-	}else if(dirfd == AT_FDCWD) {
-		e = mlibc::Sysdeps<Stat>::operator()(fsfd_target::path, 0, pathname, stat_flags, &statbuf_storage);
-	}else{
-		e = mlibc::Sysdeps<Stat>::operator()(fsfd_target::fd_path, dirfd, pathname, stat_flags, &statbuf_storage);
-	}
-
-	if(e)
-		return e;
-
-	memset(statxbuf, 0, sizeof(struct statx));
-	statxbuf->stx_blksize = statbuf_storage.st_blksize;
-	statxbuf->stx_blocks = statbuf_storage.st_blocks;
-	statxbuf->stx_gid = statbuf_storage.st_gid;
-	statxbuf->stx_ino = statbuf_storage.st_ino;
-	statxbuf->stx_mode = statbuf_storage.st_mode;
-	statxbuf->stx_nlink = statbuf_storage.st_nlink;
-	statxbuf->stx_size = statbuf_storage.st_size;
-	statxbuf->stx_uid = statbuf_storage.st_uid;
-
-	statxbuf->stx_atime.tv_sec = statbuf_storage.st_atim.tv_sec;
-	statxbuf->stx_atime.tv_nsec = statbuf_storage.st_atim.tv_nsec;
-	statxbuf->stx_btime.tv_sec = statbuf_storage.st_mtim.tv_sec;
-	statxbuf->stx_btime.tv_nsec = statbuf_storage.st_mtim.tv_nsec;
-	statxbuf->stx_ctime.tv_sec = statbuf_storage.st_ctim.tv_sec;
-	statxbuf->stx_ctime.tv_nsec = statbuf_storage.st_ctim.tv_nsec;
-	statxbuf->stx_mtime.tv_sec = statbuf_storage.st_mtim.tv_sec;
-	statxbuf->stx_mtime.tv_nsec = statbuf_storage.st_mtim.tv_nsec;
-
-	statxbuf->stx_rdev_major = major(statbuf_storage.st_rdev);
-	statxbuf->stx_rdev_minor = minor(statbuf_storage.st_rdev);
-	statxbuf->stx_dev_major = major(statbuf_storage.st_dev);
-	statxbuf->stx_dev_minor = minor(statbuf_storage.st_dev);
-
-	(void)mask;
-	statxbuf->stx_mask = STATX_BASIC_STATS | STATX_BTIME;
+	long ret = syscall(SYS_STATX, dirfd, pathname, flags, mask, statxbuf);
+	if(ret < 0)
+		return -ret;
 	return 0;
 }
 #endif
@@ -331,7 +285,7 @@ int Sysdeps<Link>::operator()(const char* srcpath, const char* destpath){
 }
 
 int Sysdeps<Unlinkat>::operator()(int fd, const char *path, int flags) {
-	long ret = syscall(SYS_UNLINK, fd, path, flags);
+	long ret = syscall(SYS_UNLINKAT, fd, path, flags);
 
 	if(ret < 0) {
 		return -ret;
@@ -371,7 +325,14 @@ int Sysdeps<Readlink>::operator()(const char *path, void *buffer, size_t max_siz
 }
 
 int Sysdeps<Dup>::operator()(int fd, int flags, int* newfd){
-	int ret = syscall(SYS_DUP, fd, flags, -1);
+	int ret = 0;
+	if(flags) {
+		if(flags != O_CLOEXEC)
+			return EINVAL;
+		ret = syscall(SYS_FCNTL, fd, F_DUPFD_CLOEXEC, 0);
+	}else{
+		ret = syscall(SYS_DUP, fd);
+	}
 	if(ret < 0){
 		return -ret;
 	}
@@ -381,7 +342,8 @@ int Sysdeps<Dup>::operator()(int fd, int flags, int* newfd){
 }
 
 int Sysdeps<Dup2>::operator()(int fd, int flags, int newfd){
-	int ret = syscall(SYS_DUP, fd, flags, newfd);
+	int ret = flags ? syscall(SYS_DUP3, fd, newfd, flags)
+	                : syscall(SYS_DUP2, fd, newfd);
 	if(ret < 0){
 		return -ret;
 	}
@@ -389,48 +351,12 @@ int Sysdeps<Dup2>::operator()(int fd, int flags, int newfd){
 	return 0;
 }
 
-typedef struct unified_dirent {
-	ino_t inode; // Inode number
-	uint32_t type;
-	char name[NAME_MAX]; // Filename
-} unified_dirent_t;
-
 int Sysdeps<ReadEntries>::operator()(int handle, void *buffer, size_t max_size, size_t *bytes_read) {
-    size_t total_bytes = 0;
-    char *out_buf = reinterpret_cast<char *>(buffer);
+    long ret = syscall(SYS_GETDENTS64, handle, buffer, max_size);
+    if(ret < 0)
+        return -ret;
 
-    // Read entries until buffer is full or no more entries.
-    while (true) {
-        // Check if there's enough space for at least one struct dirent
-        if (max_size - total_bytes < sizeof(struct dirent))
-            break;
-
-        unified_dirent_t unifiedDirent;
-        long ret = syscall(SYS_READDIR_NEXT, handle, &unifiedDirent);
-
-        // If no more entries (ret == 0) or end-of-directory error (ret == -ENOENT), exit loop.
-        if (ret <= 0) {
-            if (ret < 0 && ret != -ENOENT) {
-                return -ret; // Propagate any error aside from EOF
-            }
-            break; // EOF or no entry
-        }
-        // ret > 0: one entry read successfully
-        struct dirent *dir = reinterpret_cast<struct dirent *>(out_buf + total_bytes);
-
-        // Copy fields from unified_dirent_t to struct dirent
-        dir->d_ino = unifiedDirent.inode;
-        dir->d_off = 0; // Offset not used
-        dir->d_reclen = sizeof(struct dirent);
-        dir->d_type = unifiedDirent.type;
-        // Copy name safely, ensuring null-termination
-        strncpy(dir->d_name, unifiedDirent.name, NAME_MAX - 1);
-        dir->d_name[NAME_MAX - 1] = '\0';
-
-        total_bytes += sizeof(struct dirent);
-    }
-
-    *bytes_read = total_bytes;
+    *bytes_read = ret;
     return 0;
 }
 
@@ -481,7 +407,7 @@ int Sysdeps<Fcntl>::operator()(int fd, int request, va_list args, int* result){
 			return Sysdeps<Ioctl>::operator()(fd, FIONCLEX, NULL, result);
 		}
 	} else if(request == F_GETFL){
-		int ret = syscall(SYS_GET_FILE_STATUS_FLAGS, fd);
+		int ret = syscall(SYS_FCNTL, fd, F_GETFL, 0);
 		if(ret < 0){
 			return -ret;
 		}
@@ -489,7 +415,7 @@ int Sysdeps<Fcntl>::operator()(int fd, int request, va_list args, int* result){
 		*result = ret;
 		return 0;
 	} else if(request == F_SETFL){
-		int ret = syscall(SYS_SET_FILE_STATUS_FLAGS, fd, va_arg(args, int));
+		int ret = syscall(SYS_FCNTL, fd, F_SETFL, va_arg(args, int));
 		if (ret < 0) return -ret;
 		*result = 0;
 		return 0;
@@ -542,7 +468,12 @@ int Sysdeps<Fcntl>::operator()(int fd, int request, va_list args, int* result){
 
 int Sysdeps<Pselect>::operator()(int nfds, fd_set* readfds, fd_set* writefds,
 	fd_set *exceptfds, const struct timespec* timeout, const sigset_t* sigmask, int *num_events){
-	int ret = syscall(SYS_SELECT, nfds, readfds, writefds, exceptfds, timeout, sigmask);
+	struct {
+		const sigset_t *ss;
+		size_t ss_len;
+	} sigmask_arg = { sigmask, sizeof(sigset_t) };
+	int ret = syscall(SYS_PSELECT6, nfds, readfds, writefds, exceptfds,
+			timeout, sigmask ? &sigmask_arg : nullptr);
 	if(ret < 0){
 		return -ret;
 	}
@@ -576,7 +507,8 @@ int Sysdeps<Chmod>::operator()(const char *pathname, mode_t mode){
 }
 
 int Sysdeps<Pipe>::operator()(int *fds, int flags){
-	long ret = syscall(SYS_PIPE, fds, flags);
+	long ret = flags ? syscall(SYS_PIPE2, fds, flags)
+	                 : syscall(SYS_PIPE, fds);
 	if(ret < 0){
 		return -ret;
 	}
@@ -584,7 +516,7 @@ int Sysdeps<Pipe>::operator()(int *fds, int flags){
 }
 
 int Sysdeps<EpollCreate>::operator()(int flags, int *fd) {
-	int ret = syscall(SYS_EPOLL_CREATE, flags);
+	int ret = syscall(SYS_EPOLL_CREATE1, flags);
 
 	if(ret < 0){
 		return -ret;
@@ -607,7 +539,7 @@ int Sysdeps<EpollCtl>::operator()(int epfd, int mode, int fd, struct epoll_event
 
 int Sysdeps<EpollPwait>::operator()(int epfd, struct epoll_event *ev, int n,
 		int timeout, const sigset_t *sigmask, int *raised) {
-	int ret = syscall(SYS_EPOLL_WAIT, epfd, ev, n, timeout, sigmask);
+	int ret = syscall(SYS_EPOLL_PWAIT, epfd, ev, n, timeout, sigmask, sizeof(sigset_t));
 
 	if(ret < 0) {
 		return -ret;
@@ -691,9 +623,20 @@ void Sysdeps<Sync>::operator()()
     syscall(SYS_SYNC);
 }
 
+#if __MLIBC_LINUX_OPTION
+int Sysdeps<Syncfs>::operator()(int fd)
+{
+    long ret = syscall(SYS_SYNCFS, fd);
+    if (ret < 0) {
+        return -ret;
+    }
+    return 0;
+}
+#endif
+
 int Sysdeps<Fallocate>::operator()(int fd, off_t offset, size_t size)
 {
-    long ret = syscall(SYS_FALLOCATE, fd, offset, size);
+    long ret = syscall(SYS_FALLOCATE, fd, 0, offset, size);
     if (ret < 0) {
         return -ret;
     }
@@ -784,40 +727,19 @@ int Sysdeps<Fstatvfs>::operator()(int fd, struct statvfs *out)
 }
 
 #if __MLIBC_LINUX_OPTION
-static void statvfs_to_statfs(const struct statvfs *from, struct statfs *to)
-{
-    memset(to, 0, sizeof(*to));
-    to->f_type = 0;
-    to->f_bsize = from->f_bsize;
-    to->f_blocks = from->f_blocks;
-    to->f_bfree = from->f_bfree;
-    to->f_bavail = from->f_bavail;
-    to->f_files = from->f_files;
-    to->f_ffree = from->f_ffree;
-    to->f_fsid.__val[0] = (int)from->f_fsid;
-    to->f_fsid.__val[1] = (int)(from->f_fsid >> (sizeof(int) * 8));
-    to->f_namelen = from->f_namemax;
-    to->f_frsize = from->f_frsize;
-    to->f_flags = from->f_flag;
-}
-
 int Sysdeps<Statfs>::operator()(const char *path, struct statfs *buf)
 {
-    struct statvfs vfs;
-    int e = Sysdeps<Statvfs>::operator()(path, &vfs);
-    if (e)
-        return e;
-    statvfs_to_statfs(&vfs, buf);
+    long ret = syscall(SYS_STATFS, path, buf);
+    if(ret < 0)
+        return -ret;
     return 0;
 }
 
 int Sysdeps<Fstatfs>::operator()(int fd, struct statfs *buf)
 {
-    struct statvfs vfs;
-    int e = Sysdeps<Fstatvfs>::operator()(fd, &vfs);
-    if (e)
-        return e;
-    statvfs_to_statfs(&vfs, buf);
+    long ret = syscall(SYS_FSTATFS, fd, buf);
+    if(ret < 0)
+        return -ret;
     return 0;
 }
 #endif

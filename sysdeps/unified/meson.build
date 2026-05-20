@@ -90,6 +90,7 @@ if not no_headers
 	)
 	install_headers(
 		'include/unified/syscall.h',
+		'include/unified/syscallnos.h',
 		subdir: 'unified'
 	)
 	install_headers(
@@ -121,4 +122,3 @@ if not headers_only
 		)
 	endforeach
 endif
-

@@ -2,212 +2,267 @@
 #define SYSCALL_H
 
 #include <stdint.h>
+#include <unified/syscallnos.h>
 
-#define SYS_EXIT 1
-#define SYS_EXEC 2
-#define SYS_READ 3
-#define SYS_WRITE 4
-#define SYS_OPEN 5
-#define SYS_CLOSE 6
-#define SYS_SLEEP 7
-#define SYS_CREATE 8
-#define SYS_LINK 9
-#define SYS_UNLINK 10
-#define SYS_EXECVE 11
-#define SYS_CHDIR 12
-#define SYS_TIME 13
-#define SYS_MAP_FB 14
-#define SYS_GETTID 15
-#define SYS_CHMOD 16
-#define SYS_FSTAT 17
-#define SYS_STAT 18
-#define SYS_LSEEK 19
-#define SYS_GETPID 20
-#define SYS_MOUNT 21
-#define SYS_MKDIR 22
-#define SYS_RMDIR 23
-#define SYS_RENAME 24
-#define SYS_YIELD 25
-#define SYS_READDIR_NEXT 26
-#define SYS_SEND_MESSAGE 28
-#define SYS_RECEIVE_MESSAGE 29
-#define SYS_UPTIME 30
-#define SYS_GET_VIDEO_MODE 31
-#define SYS_UNAME 32
-#define SYS_READDIR 33
-#define SYS_SET_FS_BASE 34
-#define SYS_MMAP 35
-#define SYS_GET_CWD 37
-#define SYS_WAIT_PID 38
-#define SYS_NANO_SLEEP 39
-#define SYS_PREAD 40
-#define SYS_PWRITE 41
-#define SYS_IOCTL 42
-#define SYS_INFO 43
-#define SYS_MUNMAP 44
-#define SYS_CREATE_SHARED_MEMORY 45
-#define SYS_MAP_SHARED_MEMORY 46
-#define SYS_UNMAP_SHARED_MEMORY 47
-#define SYS_DESTROY_SHARED_MEMORY 48
-#define SYS_SOCKET 49
-#define SYS_BIND 50
-#define SYS_LISTEN 51
-#define SYS_ACCEPT 52
-#define SYS_CONNECT 53
-#define SYS_SEND 54
-#define SYS_SENDTO 55
-#define SYS_RECEIVE 56
-#define SYS_RECEIVEFROM 57
-#define SYS_GETUID 58
-#define SYS_SETUID 59
-#define SYS_POLL 60
-#define SYS_SENDMSG 61
-#define SYS_RECVMSG 62
-#define SYS_GETEUID 63
-#define SYS_SETEUID 64
-#define SYS_GET_PROCESS_INFO 65
-#define SYS_GET_NEXT_PROCESS_INFO 66
-#define SYS_READLINK 67
-#define SYS_SPAWN_THREAD 68
-#define SYS_EXIT_THREAD 69
-#define SYS_FUTEX_WAKE 70
-#define SYS_FUTEX_WAIT 71
-#define SYS_DUP 72
-#define SYS_GET_FILE_STATUS_FLAGS 73
-#define SYS_SET_FILE_STATUS_FLAGS 74
-#define SYS_SELECT 75
-#define SYS_CREATE_SERVICE 76
-#define SYS_CREATE_INTERFACE 77
-#define SYS_INTERFACE_ACCEPT 78
-#define SYS_INTERFACE_CONNECT 79
-#define SYS_ENDPOINT_QUEUE 80
-#define SYS_ENDPOINT_DEQUEUE 81
-#define SYS_ENDPOINT_CALL 82
-#define SYS_ENDPOINT_INFO 83
-#define SYS_KERNELOBJECT_WAIT_ONE 84
-#define SYS_KERNELOBJECT_WAIT 85
-#define SYS_KERNELOBJECT_DESTROY 86
-#define SYS_SET_SOCKET_OPTIONS 87
-#define SYS_GET_SOCKET_OPTIONS 88
-#define SYS_DEVICE_MANAGEMENT 89
-#define SYS_INTERRUPT_THREAD 90
-#define SYS_LOAD_KERNEL_MODULE 91
-#define SYS_UNLOAD_KERNEL_MODULE 92
-#define SYS_FORK 93
-#define SYS_GETGID 94
-#define SYS_GETEGID 95
-#define SYS_GETPPID 96
-#define SYS_PIPE 97
-#define SYS_GETENTROPY 98
-#define SYS_SOCKETPAIR 99
-#define SYS_PEERNAME 100
-#define SYS_SOCKNAME 101
-#define SYS_SIGNAL_ACTION 102
-#define SYS_SIGPROCMASK 103
-#define SYS_KILL 104
-#define SYS_SIGNAL_RETURN 105
-#define SYS_ALARM 106
-#define SYS_GET_RESOURCE_LIMIT 107 
-#define SYS_EPOLL_CREATE 108
-#define SYS_EPOLL_CTL 109
-#define SYS_EPOLL_WAIT 110
-#define SYS_FCHDIR 111
-#define SYS_GETPGID 112
-#define SYS_SETPGID 113
-#define SYS_SIGSUSPEND 114
-#define SYS_FSTATAT 115
-#define SYS_FSYNC    116
-#define SYS_SYNC     117
-#define SYS_UNMOUNT     118
-#define SYS_MKDIRAT     119
-#define SYS_OPENAT     120
-#define SYS_SENDFILE            121
-#define SYS_COPY_FILE_RANGE     122
-#define SYS_FCNTL               123
-#define SYS_SYMLINK             124
-#define SYS_LSTAT               125
-#define SYS_TRUNCATE            126
-#define SYS_FTRUNCATE           127
-#define SYS_FCHMOD              128
-#define SYS_CHOWN               129
-#define SYS_FCHOWN              130
-#define SYS_LCHOWN              131
-#define SYS_MPROTECT            132
-#define SYS_SETGID              133
-#define SYS_SETEGID             134
-#define SYS_SETITIMER           135
-#define SYS_GETITIMER           136
-#define SYS_SIGWAIT             137
-#define SYS_SIGPENDING          138
-#define SYS_MKFIFO              139
-#define SYS_SHUTDOWN            140
-#define SYS_SETSID              141
-#define SYS_GETSID              142
-#define SYS_SET_RESOURCE_LIMIT  143
-#define SYS_GETRUSAGE           144
-#define SYS_PRCTL               145
-#define SYS_EVENTFD             146
-#define SYS_TIMERFD_CREATE      147
-#define SYS_TIMERFD_SETTIME     148
-#define SYS_TIMERFD_GETTIME     149
-#define SYS_SIGNALFD            150
-#define SYS_RENAME_AT           151
-#define SYS_CLONE               152
-#define SYS_SCHED_SETAFFINITY   153
-#define SYS_SCHED_GETAFFINITY   154
-#define SYS_GETRESUID           155
-#define SYS_SETRESUID           156
-#define SYS_GETRESGID           157
-#define SYS_SETRESGID           158
-#define SYS_GETGROUPS           159
-#define SYS_SETGROUPS           160
-#define SYS_SETREUID            161
-#define SYS_SETREGID            162
-#define SYS_UMASK               163
-#define SYS_FALLOCATE           164
-#define SYS_FLOCK               165
-#define SYS_GETPRIORITY         166
-#define SYS_SETPRIORITY         167
-#define SYS_GETCPU              168
-#define SYS_MEMBARRIER          169
-#define SYS_GET_MEMPOLICY       170
-#define SYS_MEMFD_CREATE        171
-#define SYS_GETTIDID            172
-#define SYS_SETTIDID            173
-#define SYS_MADVISE             174
-#define SYS_GETSCHEDPARAM       175
-#define SYS_SETSCHEDPARAM       176
-#define SYS_SYSCONF             177
-#define SYS_READV               178
-#define SYS_WRITEV              179
-#define SYS_STATVFS             180
-#define SYS_FSTATVFS            181
-#define SYS_FACCESSAT           182
-#define SYS_FCHMODAT            183
-#define SYS_FCHOWNAT            184
-#define SYS_LINKAT              185
-#define SYS_SYMLINKAT           186
-#define SYS_UTIMENSAT           187
-#define SYS_CLOCK_GETRES        188
-#define SYS_CLOCK_GETTIME       189
-#define SYS_SIGALTSTACK         190
-#define SYS_MREMAP              191
-#define SYS_SIGTIMEDWAIT        192
-#define SYS_TGKILL              193
-#define SYS_FADVISE             194
-#define SYS_GETPRIORITYMAX      195
-#define SYS_GETPRIORITYMIN      196
-#define SYS_FDATASYNC           197
-#define SYS_MINCORE            198
-#define SYS_EXIT_GROUP         199
-#define SYS_WAITID             200
-#define SYS_PIDFD_OPEN         201
-#define SYS_PIDFD_GETPID       202
-#define SYS_PIDFD_SEND_SIGNAL  203
-#define SYS_SIGQUEUE           204
-#define SYS_TGSIGQUEUE         205
-#define SYS_WAIT4              206
-#define SYS_REBOOT             207
+#define SYS_READ __NR_read
+#define SYS_WRITE __NR_write
+#define SYS_OPEN __NR_open
+#define SYS_CLOSE __NR_close
+#define SYS_STAT __NR_stat
+#define SYS_FSTAT __NR_fstat
+#define SYS_LSTAT __NR_lstat
+#define SYS_POLL __NR_poll
+#define SYS_LSEEK __NR_lseek
+#define SYS_MMAP __NR_mmap
+#define SYS_MPROTECT __NR_mprotect
+#define SYS_MUNMAP __NR_munmap
+#define SYS_BRK __NR_brk
+#define SYS_SIGNAL_ACTION __NR_rt_sigaction
+#define SYS_SIGPROCMASK __NR_rt_sigprocmask
+#define SYS_SIGNAL_RETURN __NR_rt_sigreturn
+#define SYS_IOCTL __NR_ioctl
+#define SYS_PREAD __NR_pread64
+#define SYS_PWRITE __NR_pwrite64
+#define SYS_READV __NR_readv
+#define SYS_WRITEV __NR_writev
+#define SYS_ACCESS __NR_access
+#define SYS_PIPE __NR_pipe
+#define SYS_YIELD __NR_sched_yield
+#define SYS_MREMAP __NR_mremap
+#define SYS_MSYNC __NR_msync
+#define SYS_MINCORE __NR_mincore
+#define SYS_MADVISE __NR_madvise
+#define SYS_DUP __NR_dup
+#define SYS_DUP2 __NR_dup2
+#define SYS_PAUSE __NR_pause
+#define SYS_NANO_SLEEP __NR_nanosleep
+#define SYS_GETITIMER __NR_getitimer
+#define SYS_ALARM __NR_alarm
+#define SYS_SETITIMER __NR_setitimer
+#define SYS_GETPID __NR_getpid
+#define SYS_SENDFILE __NR_sendfile
+#define SYS_SOCKET __NR_socket
+#define SYS_CONNECT __NR_connect
+#define SYS_ACCEPT __NR_accept
+#define SYS_SENDTO __NR_sendto
+#define SYS_RECEIVEFROM __NR_recvfrom
+#define SYS_SENDMSG __NR_sendmsg
+#define SYS_RECVMSG __NR_recvmsg
+#define SYS_SHUTDOWN __NR_shutdown
+#define SYS_BIND __NR_bind
+#define SYS_LISTEN __NR_listen
+#define SYS_SOCKNAME __NR_getsockname
+#define SYS_PEERNAME __NR_getpeername
+#define SYS_SOCKETPAIR __NR_socketpair
+#define SYS_SET_SOCKET_OPTIONS __NR_setsockopt
+#define SYS_GET_SOCKET_OPTIONS __NR_getsockopt
+#define SYS_FORK __NR_fork
+#define SYS_EXECVE __NR_execve
+#define SYS_EXIT __NR_exit
+#define SYS_WAIT4 __NR_wait4
+#define SYS_KILL __NR_kill
+#define SYS_UNAME __NR_uname
+#define SYS_FCNTL __NR_fcntl
+#define SYS_FLOCK __NR_flock
+#define SYS_FSYNC __NR_fsync
+#define SYS_FDATASYNC __NR_fdatasync
+#define SYS_TRUNCATE __NR_truncate
+#define SYS_FTRUNCATE __NR_ftruncate
+#define SYS_GET_CWD __NR_getcwd
+#define SYS_CHDIR __NR_chdir
+#define SYS_FCHDIR __NR_fchdir
+#define SYS_RENAME __NR_rename
+#define SYS_MKDIR __NR_mkdir
+#define SYS_RMDIR __NR_rmdir
+#define SYS_LINK __NR_link
+#define SYS_UNLINK __NR_unlink
+#define SYS_SYMLINK __NR_symlink
+#define SYS_READLINK __NR_readlink
+#define SYS_CHMOD __NR_chmod
+#define SYS_FCHMOD __NR_fchmod
+#define SYS_CHOWN __NR_chown
+#define SYS_FCHOWN __NR_fchown
+#define SYS_LCHOWN __NR_lchown
+#define SYS_UMASK __NR_umask
+#define SYS_GETTIMEOFDAY __NR_gettimeofday
+#define SYS_GET_RESOURCE_LIMIT __NR_getrlimit
+#define SYS_GETRUSAGE __NR_getrusage
+#define SYS_INFO __NR_sysinfo
+#define SYS_GETUID __NR_getuid
+#define SYS_GETGID __NR_getgid
+#define SYS_SETUID __NR_setuid
+#define SYS_SETGID __NR_setgid
+#define SYS_GETEUID __NR_geteuid
+#define SYS_GETEGID __NR_getegid
+#define SYS_SETPGID __NR_setpgid
+#define SYS_GETPPID __NR_getppid
+#define SYS_GETPGRP __NR_getpgrp
+#define SYS_SETSID __NR_setsid
+#define SYS_SETREUID __NR_setreuid
+#define SYS_SETREGID __NR_setregid
+#define SYS_GETGROUPS __NR_getgroups
+#define SYS_SETGROUPS __NR_setgroups
+#define SYS_SETRESUID __NR_setresuid
+#define SYS_GETRESUID __NR_getresuid
+#define SYS_SETRESGID __NR_setresgid
+#define SYS_GETRESGID __NR_getresgid
+#define SYS_GETPGID __NR_getpgid
+#define SYS_GETSID __NR_getsid
+#define SYS_SIGPENDING __NR_rt_sigpending
+#define SYS_SIGTIMEDWAIT __NR_rt_sigtimedwait
+#define SYS_SIGQUEUE __NR_rt_sigqueueinfo
+#define SYS_SIGSUSPEND __NR_rt_sigsuspend
+#define SYS_SIGALTSTACK __NR_sigaltstack
+#define SYS_STATFS __NR_statfs
+#define SYS_FSTATFS __NR_fstatfs
+#define SYS_GETPRIORITY __NR_getpriority
+#define SYS_SETPRIORITY __NR_setpriority
+#define SYS_SCHED_SETPARAM __NR_sched_setparam
+#define SYS_SCHED_GETPARAM __NR_sched_getparam
+#define SYS_SCHED_SETSCHEDULER __NR_sched_setscheduler
+#define SYS_SCHED_GETSCHEDULER __NR_sched_getscheduler
+#define SYS_SCHED_GET_PRIORITY_MAX __NR_sched_get_priority_max
+#define SYS_SCHED_GET_PRIORITY_MIN __NR_sched_get_priority_min
+#define SYS_PRCTL __NR_prctl
+#define SYS_ARCH_PRCTL __NR_arch_prctl
+#define SYS_SET_RESOURCE_LIMIT __NR_setrlimit
+#define SYS_SYNC __NR_sync
+#define SYS_MOUNT __NR_mount
+#define SYS_UNMOUNT __NR_umount2
+#define SYS_REBOOT __NR_reboot
+#define SYS_GETTID __NR_gettid
+#define SYS_TKILL __NR_tkill
+#define SYS_TIME __NR_time
+#define SYS_FUTEX_WAIT __NR_futex
+#define SYS_SCHED_SETAFFINITY __NR_sched_setaffinity
+#define SYS_SCHED_GETAFFINITY __NR_sched_getaffinity
+#define SYS_EPOLL_CREATE __NR_epoll_create
+#define SYS_GETDENTS64 __NR_getdents64
+#define SYS_SET_TID_ADDRESS __NR_set_tid_address
+#define SYS_GET_ROBUST_LIST __NR_get_robust_list
+#define SYS_FADVISE __NR_fadvise64
+#define SYS_CLOCK_NANOSLEEP __NR_clock_nanosleep
+#define SYS_CLOCK_GETTIME __NR_clock_gettime
+#define SYS_CLOCK_GETRES __NR_clock_getres
+#define SYS_EXIT_GROUP __NR_exit_group
+#define SYS_EPOLL_WAIT __NR_epoll_wait
+#define SYS_EPOLL_CTL __NR_epoll_ctl
+#define SYS_TGKILL __NR_tgkill
+#define SYS_GET_MEMPOLICY __NR_get_mempolicy
+#define SYS_WAITID __NR_waitid
+#define SYS_OPENAT __NR_openat
+#define SYS_MKDIRAT __NR_mkdirat
+#define SYS_FCHOWNAT __NR_fchownat
+#define SYS_FSTATAT __NR_newfstatat
+#define SYS_UNLINKAT __NR_unlinkat
+#define SYS_RENAME_AT __NR_renameat
+#define SYS_LINKAT __NR_linkat
+#define SYS_SYMLINKAT __NR_symlinkat
+#define SYS_READLINKAT __NR_readlinkat
+#define SYS_FCHMODAT __NR_fchmodat
+#define SYS_FACCESSAT __NR_faccessat
+#define SYS_PSELECT6 __NR_pselect6
+#define SYS_PPOLL __NR_ppoll
+#define SYS_SET_ROBUST_LIST __NR_set_robust_list
+#define SYS_UTIMENSAT __NR_utimensat
+#define SYS_EPOLL_PWAIT __NR_epoll_pwait
+#define SYS_SIGNALFD __NR_signalfd
+#define SYS_TIMERFD_CREATE __NR_timerfd_create
+#define SYS_EVENTFD __NR_eventfd
+#define SYS_FALLOCATE __NR_fallocate
+#define SYS_TIMERFD_SETTIME __NR_timerfd_settime
+#define SYS_TIMERFD_GETTIME __NR_timerfd_gettime
+#define SYS_ACCEPT4 __NR_accept4
+#define SYS_SIGNALFD4 __NR_signalfd4
+#define SYS_EVENTFD2 __NR_eventfd2
+#define SYS_EPOLL_CREATE1 __NR_epoll_create1
+#define SYS_DUP3 __NR_dup3
+#define SYS_PIPE2 __NR_pipe2
+#define SYS_PREADV __NR_preadv
+#define SYS_PWRITEV __NR_pwritev
+#define SYS_TGSIGQUEUE __NR_rt_tgsigqueueinfo
+#define SYS_PRLIMIT64 __NR_prlimit64
+#define SYS_NAME_TO_HANDLE_AT __NR_name_to_handle_at
+#define SYS_OPEN_BY_HANDLE_AT __NR_open_by_handle_at
+#define SYS_SYNCFS __NR_syncfs
+#define SYS_GETCPU __NR_getcpu
+#define SYS_RENAMEAT2 __NR_renameat2
+#define SYS_GETRANDOM __NR_getrandom
+#define SYS_MEMFD_CREATE __NR_memfd_create
+#define SYS_MEMBARRIER __NR_membarrier
+#define SYS_COPY_FILE_RANGE __NR_copy_file_range
+#define SYS_PREADV2 __NR_preadv2
+#define SYS_PWRITEV2 __NR_pwritev2
+#define SYS_STATX __NR_statx
+#define SYS_PIDFD_SEND_SIGNAL __NR_pidfd_send_signal
+#define SYS_PIDFD_OPEN __NR_pidfd_open
+#define SYS_CLONE3 __NR_clone3
+#define SYS_CLOSE_RANGE __NR_close_range
+#define SYS_OPENAT2 __NR_openat2
+#define SYS_PIDFD_GETFD __NR_pidfd_getfd
+#define SYS_FACCESSAT2 __NR_faccessat2
+#define SYS_FCHMODAT2 __NR_fchmodat2
+
+#define SYS_UNIFIED_BASE 512
+#define SYS_DEBUG 512
+#define SYS_SLEEP 513
+#define SYS_MAP_FB 514
+#define SYS_GET_VIDEO_MODE 515
+#define SYS_EXEC 516
+#define SYS_CREATE 517
+#define SYS_READDIR_NEXT 518
+#define SYS_READDIR 519
+#define SYS_SEND_MESSAGE 520
+#define SYS_RECEIVE_MESSAGE 521
+#define SYS_UPTIME 522
+#define SYS_SET_FS_BASE 523
+#define SYS_CREATE_SHARED_MEMORY 524
+#define SYS_MAP_SHARED_MEMORY 525
+#define SYS_UNMAP_SHARED_MEMORY 526
+#define SYS_DESTROY_SHARED_MEMORY 527
+#define SYS_SEND 528
+#define SYS_RECEIVE 529
+#define SYS_GET_PROCESS_INFO 530
+#define SYS_GET_NEXT_PROCESS_INFO 531
+#define SYS_SPAWN_THREAD 532
+#define SYS_EXIT_THREAD 533
+#define SYS_FUTEX_WAKE 534
+#define SYS_GET_FILE_STATUS_FLAGS 535
+#define SYS_SET_FILE_STATUS_FLAGS 536
+#define SYS_CREATE_SERVICE 537
+#define SYS_CREATE_INTERFACE 538
+#define SYS_INTERFACE_ACCEPT 539
+#define SYS_INTERFACE_CONNECT 540
+#define SYS_ENDPOINT_QUEUE 541
+#define SYS_ENDPOINT_DEQUEUE 542
+#define SYS_ENDPOINT_CALL 543
+#define SYS_ENDPOINT_INFO 544
+#define SYS_KERNELOBJECT_WAIT_ONE 545
+#define SYS_KERNELOBJECT_WAIT 546
+#define SYS_KERNELOBJECT_DESTROY 547
+#define SYS_DEVICE_MANAGEMENT 548
+#define SYS_INTERRUPT_THREAD 549
+#define SYS_LOAD_KERNEL_MODULE 550
+#define SYS_UNLOAD_KERNEL_MODULE 551
+#define SYS_MKFIFO 552
+#define SYS_STATVFS 553
+#define SYS_FSTATVFS 554
+#define SYS_PIDFD_GETPID 555
+#define SYS_GETTIDID 556
+#define SYS_SETTIDID 557
+#define SYS_SYSCONF 558
+#define SYS_SELECT 559
+#define SYS_GETSCHEDPARAM 560
+#define SYS_SETSCHEDPARAM 561
+#define SYS_GETPRIORITYMAX 562
+#define SYS_GETPRIORITYMIN 563
+#define SYS_GETENTROPY 564
+#define SYS_CLONE 565
+#define SYS_SETEUID 566
+#define SYS_SETEGID 567
+#define SYS_SIGWAIT 568
+#define SYS_WAIT_PID 569
+#define SYS_UNIFIED_INFO 570
 
 #ifdef __cplusplus
 extern "C"{
@@ -253,14 +308,28 @@ static long syscalln1(uint64_t call, uint64_t arg0) {
 __attribute__((__always_inline__))
 static long syscalln2(uint64_t call, uint64_t arg0, uint64_t arg1) {
     volatile long ret;
-    __asm__ volatile("int $0x69" : "=a"(ret) : "a"(call), "D"(arg0), "S"(arg1) : "memory", "cc");
+    register uint64_t r10z __asm__("r10") = 0;
+    register uint64_t r8z  __asm__("r8")  = 0;
+    register uint64_t r9z  __asm__("r9")  = 0;
+    __asm__ volatile("int $0x69"
+                     : "=a"(ret)
+                     : "a"(call), "D"(arg0), "S"(arg1), "d"(0ULL),
+                       "r"(r10z), "r"(r8z), "r"(r9z)
+                     : "memory", "cc");
     return ret;
 }
 
 __attribute__((__always_inline__))
 static long syscalln3(uint64_t call, uint64_t arg0, uint64_t arg1, uint64_t arg2) {
     volatile long ret;
-    __asm__ volatile("int $0x69" : "=a"(ret) : "a"(call), "D"(arg0), "S"(arg1), "d"(arg2) : "memory", "cc");
+    register uint64_t r10z __asm__("r10") = 0;
+    register uint64_t r8z  __asm__("r8")  = 0;
+    register uint64_t r9z  __asm__("r9")  = 0;
+    __asm__ volatile("int $0x69"
+                     : "=a"(ret)
+                     : "a"(call), "D"(arg0), "S"(arg1), "d"(arg2),
+                       "r"(r10z), "r"(r8z), "r"(r9z)
+                     : "memory", "cc");
     return ret;
 }
 
@@ -268,7 +337,13 @@ __attribute__((__always_inline__))
 static long syscalln4(uint64_t call, uint64_t arg0, uint64_t arg1, uint64_t arg2, uint64_t arg3) {
     volatile long ret;
 	register uint64_t arg3r __asm__("r10") = arg3; /* put arg3 in r10 */
-    __asm__ volatile("int $0x69" : "=a"(ret) : "a"(call), "D"(arg0), "S"(arg1), "d"(arg2), "r"(arg3r) : "memory", "cc");
+    register uint64_t r8z __asm__("r8") = 0;
+    register uint64_t r9z __asm__("r9") = 0;
+    __asm__ volatile("int $0x69"
+                     : "=a"(ret)
+                     : "a"(call), "D"(arg0), "S"(arg1), "d"(arg2),
+                       "r"(arg3r), "r"(r8z), "r"(r9z)
+                     : "memory", "cc");
     return ret;
 }
 
@@ -276,8 +351,9 @@ __attribute__((__always_inline__))
 static long syscalln5(uint64_t call, uint64_t arg0, uint64_t arg1, uint64_t arg2, uint64_t arg3, uint64_t arg4) {
     volatile long ret;
 	register uint64_t arg3r __asm__("r10") = arg3; /* put arg3 in r10 */
-	register uint64_t arg4r __asm__("r9") = arg4; /* put arg4 in r9 */
-    __asm__ volatile("int $0x69" : "=a"(ret) : "a"(call), "D"(arg0), "S"(arg1), "d"(arg2), "r"(arg3r), "r"(arg4r) : "memory", "cc");
+	register uint64_t arg4r __asm__("r8") = arg4; /* put arg4 in r8 */
+	register uint64_t r9z __asm__("r9") = 0;
+    __asm__ volatile("int $0x69" : "=a"(ret) : "a"(call), "D"(arg0), "S"(arg1), "d"(arg2), "r"(arg3r), "r"(arg4r), "r"(r9z) : "memory", "cc");
     return ret;
 }
 
@@ -285,20 +361,19 @@ __attribute__((__always_inline__))
 static long syscalln6(uint64_t call, uint64_t arg0, uint64_t arg1, uint64_t arg2, uint64_t arg3, uint64_t arg4, uint64_t arg5) {
     volatile long ret;
 	register uint64_t arg3r __asm__("r10") = arg3; /* put arg3 in r10 */
-	register uint64_t arg4r __asm__("r9") = arg4; /* put arg4 in r9 */
-	register uint64_t arg5r __asm__("r8") = arg5; /* put arg5 in r8 */
+	register uint64_t arg4r __asm__("r8") = arg4; /* put arg4 in r8 */
+	register uint64_t arg5r __asm__("r9") = arg5; /* put arg5 in r9 */
     __asm__ volatile("int $0x69" : "=a"(ret) : "a"(call), "D"(arg0), "S"(arg1), "d"(arg2), "r"(arg3r), "r"(arg4r), "r"(arg5r) : "memory", "cc");
     return ret;
 }
 
-// For syscalls with 7 arguments (like mmap with fd and offset), we pack fd and offset into a single struct
-// fd (32-bit) in low bits, offset (64-bit) passed separately via r12
+// Non-Linux Unified extension: a seventh argument is passed in r12.
 __attribute__((__always_inline__))
 static long syscalln7(uint64_t call, uint64_t arg0, uint64_t arg1, uint64_t arg2, uint64_t arg3, uint64_t arg4, uint64_t arg5, uint64_t arg6) {
     volatile long ret;
 	register uint64_t arg3r __asm__("r10") = arg3; /* put arg3 in r10 */
-	register uint64_t arg4r __asm__("r9") = arg4; /* put arg4 in r9 */
-	register uint64_t arg5r __asm__("r8") = arg5; /* put arg5 in r8 */
+	register uint64_t arg4r __asm__("r8") = arg4; /* put arg4 in r8 */
+	register uint64_t arg5r __asm__("r9") = arg5; /* put arg5 in r9 */
 	register uint64_t arg6r __asm__("r12") = arg6; /* put arg6 in r12 */
     __asm__ volatile("int $0x69" : "=a"(ret) : "a"(call), "D"(arg0), "S"(arg1), "d"(arg2), "r"(arg3r), "r"(arg4r), "r"(arg5r), "r"(arg6r) : "memory", "cc");
     return ret;

@@ -227,44 +227,26 @@ int Sysdeps<Socketpair>::operator()(int domain, int type_and_flags, int proto, i
 
 int Sysdeps<Sockname>::operator()(int fd, struct sockaddr *addr_ptr, socklen_t max_addr_length,
     socklen_t *actual_length) {
-    long ret = syscall(SYS_SOCKNAME, fd, addr_ptr, max_addr_length);
+    socklen_t length = max_addr_length;
+    long ret = syscall(SYS_SOCKNAME, fd, addr_ptr, &length);
     if (ret < 0) {
         return -ret;
     }
     if (actual_length) {
-        switch (addr_ptr->sa_family) {
-            case AF_INET:
-                *actual_length = sizeof(struct sockaddr_in);
-                break;
-            case AF_UNIX:
-                *actual_length = sizeof(struct sockaddr_un);
-                break;
-            default:
-                *actual_length = max_addr_length;
-                break;
-        }
+        *actual_length = length;
     }
     return 0;
 }
 
 int Sysdeps<Peername>::operator()(int fd, struct sockaddr *addr_ptr, socklen_t max_addr_length,
     socklen_t *actual_length) {
-    long ret = syscall(SYS_PEERNAME, fd, addr_ptr, max_addr_length);
+    socklen_t length = max_addr_length;
+    long ret = syscall(SYS_PEERNAME, fd, addr_ptr, &length);
     if (ret < 0) {
         return -ret;
     }
     if (actual_length) {
-        switch (addr_ptr->sa_family) {
-            case AF_INET:
-                *actual_length = sizeof(struct sockaddr_in);
-                break;
-            case AF_UNIX:
-                *actual_length = sizeof(struct sockaddr_un);
-                break;
-            default:
-                *actual_length = max_addr_length;
-                break;
-        }
+        *actual_length = length;
     }
     return 0;
 }
