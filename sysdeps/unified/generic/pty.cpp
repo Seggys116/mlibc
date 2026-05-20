@@ -10,21 +10,21 @@
 
 namespace mlibc {
 
-int sys_isatty(int fd) {
+int Sysdeps<Isatty>::operator()(int fd) {
 	struct winsize ws;
-	long ret = sys_ioctl(fd, TIOCGWINSZ, &ws, 0);
+	long ret = Sysdeps<Ioctl>::operator()(fd, TIOCGWINSZ, &ws, 0);
 
 	if(!ret) return 0;
 
 	return ENOTTY;
 }
 
-int sys_tcgetattr(int fd, struct termios *attr) {
-	if(int e = sys_isatty(fd))
+int Sysdeps<Tcgetattr>::operator()(int fd, struct termios *attr) {
+	if(int e = Sysdeps<Isatty>::operator()(fd))
 		return e;
 
 	int ret;
-	sys_ioctl(fd, TCGETS, attr, &ret);
+	Sysdeps<Ioctl>::operator()(fd, TCGETS, attr, &ret);
 
 	if(ret)
 		return -ret;
@@ -32,8 +32,8 @@ int sys_tcgetattr(int fd, struct termios *attr) {
 	return 0;
 }
 
-int sys_tcsetattr(int fd, int optional_action, const struct termios *attr) {
-	if(int e = sys_isatty(fd))
+int Sysdeps<Tcsetattr>::operator()(int fd, int optional_action, const struct termios *attr) {
+	if(int e = Sysdeps<Isatty>::operator()(fd))
 		return e;
 
     int cmd;
@@ -51,7 +51,7 @@ int sys_tcsetattr(int fd, int optional_action, const struct termios *attr) {
         return EINVAL;
     }
     int ret;
-    sys_ioctl(fd, cmd, const_cast<struct termios *>(attr), &ret);
+    Sysdeps<Ioctl>::operator()(fd, cmd, const_cast<struct termios *>(attr), &ret);
 
 	if(ret)
 		return -ret;
@@ -59,10 +59,10 @@ int sys_tcsetattr(int fd, int optional_action, const struct termios *attr) {
 	return 0;
 }
 
-int sys_ptsname(int fd, char *buffer, size_t length) {
+int Sysdeps<Ptsname>::operator()(int fd, char *buffer, size_t length) {
 	int index = 0;
 	int result = 0;
-	if(int e = sys_ioctl(fd, TIOCGPTN, nullptr, &result); e)
+	if(int e = Sysdeps<Ioctl>::operator()(fd, TIOCGPTN, nullptr, &result); e)
 		return e;
 	index = result;
 	if((size_t)snprintf(buffer, length, "/dev/pts/%d", index) >= length) {
@@ -71,10 +71,10 @@ int sys_ptsname(int fd, char *buffer, size_t length) {
 	return 0;
 }
 
-int sys_unlockpt(int fd) {
+int Sysdeps<Unlockpt>::operator()(int fd) {
 	int unlock = 0;
 
-	if (int e = sys_ioctl(fd, TIOCSPTLCK, &unlock, NULL); e)
+	if (int e = Sysdeps<Ioctl>::operator()(fd, TIOCSPTLCK, &unlock, NULL); e)
 		return e;
 
 	return 0;

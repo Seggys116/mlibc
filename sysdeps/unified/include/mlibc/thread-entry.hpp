@@ -1,6 +1,6 @@
 #pragma once
 
-#include <mlibc/tcb.hpp>
+#include "tcb.hpp"
 
 extern "C" void __mlibc_start_thread(void);
 extern "C" [[gnu::visibility("hidden")]] void __mlibc_enter_thread(void *entry, void *user_arg, Tcb *tcb);

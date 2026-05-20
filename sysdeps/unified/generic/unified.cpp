@@ -25,9 +25,11 @@ namespace mlibc{
 extern "C" void __mlibc_raw_clone_entry();
 
 static constexpr int kFutexWait = 0;
+static constexpr int kFutexWakeOne = 1;
+static constexpr int kFutexWakeAll = INT_MAX;
 static constexpr int kFutexPrivateFlag = 128;
 
-int sys_futex_tid(){
+int Sysdeps<FutexTid>::operator()(){
 	constexpr int kMaxFutexTid = (1 << 30) - 1;
 	long ret = syscall(SYS_GETTID);
 	if(ret > 0 && ret <= kMaxFutexTid)
@@ -39,7 +41,7 @@ int sys_futex_tid(){
 	return 0;
 }
 
-int sys_futex_wait(int *pointer, int expected, const struct timespec *time){
+int Sysdeps<FutexWait>::operator()(int *pointer, int expected, const struct timespec *time){
 	// Linux-style futex op through syscall 71:
 	// futex(uaddr, op=FUTEX_WAIT, val=expected, timeout, uaddr2, val3)
 	// Keep all futex traffic on one ABI path so WAIT/WAKE semantics match.
@@ -49,9 +51,8 @@ int sys_futex_wait(int *pointer, int expected, const struct timespec *time){
 	return 0;
 }
 
-int sys_futex_wake(int *pointer, int count) {
-	if(count <= 0)
-		return 0;
+int Sysdeps<FutexWake>::operator()(int *pointer, bool all) {
+	int count = all ? kFutexWakeAll : kFutexWakeOne;
 
 	// Use the dedicated wake syscall so hot wake paths bypass WAIT-side ABI
 	// compatibility decoding and timeout handling.
@@ -65,7 +66,7 @@ int sys_futex_wake(int *pointer, int count) {
 	return static_cast<int>(ret);
 }
 
-int sys_tcb_set(void* pointer){
+int Sysdeps<TcbSet>::operator()(void* pointer){
 	// x86_64 local-exec TLS sequences first load the canonical self-pointer
 	// from %fs:0 and then apply the negative TLS offset. Re-establish that
 	// slot every time we install a TCB so compiler-generated TLS accesses
@@ -88,7 +89,7 @@ int sys_tcb_set(void* pointer){
 	return 0;
 }
 
-int sys_tcflow(int fd, int action) {
+int Sysdeps<Tcflow>::operator()(int fd, int action) {
 	// tcflow controls terminal flow control (suspend/resume I/O)
 	// Use TCXONC ioctl command (0x540A)
 	long ret = syscall(SYS_IOCTL, fd, 0x540A, action);
@@ -98,7 +99,7 @@ int sys_tcflow(int fd, int action) {
 	return 0;
 }
 
-int sys_vm_map(void *hint, size_t size, int prot, int flags, int fd, off_t offset, void **window) {
+int Sysdeps<VmMap>::operator()(void *hint, size_t size, int prot, int flags, int fd, off_t offset, void **window) {
 	size_t aligned_size = (size + 0xFFF) & ~static_cast<size_t>(0xFFF);
 	long ret = syscall(SYS_MMAP, (uintptr_t)window, aligned_size, (uintptr_t)hint, flags, prot, fd, offset);
 	if (ret < 0) {
@@ -117,7 +118,7 @@ int sys_vm_map(void *hint, size_t size, int prot, int flags, int fd, off_t offse
 	return 0;
 }
 
-int sys_vm_unmap(void* address, size_t size) {
+int Sysdeps<VmUnmap>::operator()(void* address, size_t size) {
 	/* Round up size to page boundary - Linux munmap accepts any size */
 	size_t aligned_size = (size + 0xFFF) & ~static_cast<size_t>(0xFFF);
 
@@ -129,7 +130,7 @@ int sys_vm_unmap(void* address, size_t size) {
 }
 
 int
-sys_vm_protect(void *pointer, size_t size, int prot)
+Sysdeps<VmProtect>::operator()(void *pointer, size_t size, int prot)
 {
 	long ret = syscall(SYS_MPROTECT, (uintptr_t)pointer, size, prot);
 	if (ret < 0) {
@@ -139,7 +140,8 @@ sys_vm_protect(void *pointer, size_t size, int prot)
 }
 
 
-int sys_vm_remap(void *pointer, size_t size, size_t new_size, int flags, void **window) {
+int Sysdeps<VmRemap>::operator()(void *pointer, size_t size, size_t new_size, void **window) {
+	constexpr int flags = 0;
 	long ret = syscall(SYS_MREMAP, (uintptr_t)pointer, size, new_size, flags);
 	if (ret < 0)
 		return -ret;
@@ -147,7 +149,7 @@ int sys_vm_remap(void *pointer, size_t size, size_t new_size, int flags, void **
 	return 0;
 }
 
-int sys_madvise(void *pointer, size_t size, int advice) {
+int Sysdeps<Madvise>::operator()(void *pointer, size_t size, int advice) {
 	long ret = syscall(SYS_MADVISE, (uintptr_t)pointer, size, advice);
 	if (ret < 0) {
 		return -ret;
@@ -155,7 +157,7 @@ int sys_madvise(void *pointer, size_t size, int advice) {
 	return 0;
 }
 
-int sys_mincore(void *addr, size_t length, unsigned char *vec) {
+int Sysdeps<Mincore>::operator()(void *addr, size_t length, unsigned char *vec) {
 	long ret = syscall(SYS_MINCORE, (uintptr_t)addr, length, (uintptr_t)vec);
 	if (ret < 0) {
 		return -ret;
@@ -163,16 +165,16 @@ int sys_mincore(void *addr, size_t length, unsigned char *vec) {
 	return 0;
 }
 
-int sys_anon_allocate(size_t size, void **pointer) {
-	return sys_vm_map(nullptr, size, PROT_READ | PROT_WRITE, MAP_ANONYMOUS, -1, 0, pointer);
+int Sysdeps<AnonAllocate>::operator()(size_t size, void **pointer) {
+	return Sysdeps<VmMap>::operator()(nullptr, size, PROT_READ | PROT_WRITE, MAP_ANONYMOUS, -1, 0, pointer);
 }
 
-int sys_anon_free(void *pointer, size_t size) {
-	return sys_vm_unmap(pointer, size);
+int Sysdeps<AnonFree>::operator()(void *pointer, size_t size) {
+	return Sysdeps<VmUnmap>::operator()(pointer, size);
 }
 
-void sys_libc_panic(){
-	sys_libc_log("libc panic!");
+void Sysdeps<LibcPanic>::operator()(){
+	Sysdeps<LibcLog>::operator()("libc panic!");
 	// Match abort() semantics:
 	// 1) Unblock and raise SIGABRT.
 	// 2) If a handler returns or SIGABRT was ignored, reset to default and raise again.
@@ -202,11 +204,11 @@ void sys_libc_panic(){
 	for(;;);
 }
 
-void sys_libc_log(const char* msg){
+void Sysdeps<LibcLog>::operator()(const char* msg){
 	syscall(0, (uintptr_t)msg);
 }
 
-int sys_gethostname(char *buffer, size_t bufsize) {
+int Sysdeps<GetHostname>::operator()(char *buffer, size_t bufsize) {
 	if (!buffer) {
 		return EFAULT;
 	}
@@ -215,7 +217,7 @@ int sys_gethostname(char *buffer, size_t bufsize) {
 		return 0;
 
 	struct utsname uts = {};
-	if (sys_uname(&uts) == 0) {
+	if (Sysdeps<Uname>::operator()(&uts) == 0) {
 		size_t i = 0;
 		for (; i + 1 < bufsize && uts.nodename[i]; ++i)
 			buffer[i] = uts.nodename[i];
@@ -227,27 +229,35 @@ int sys_gethostname(char *buffer, size_t bufsize) {
 	return 0;
 }
 
+int Sysdeps<Uname>::operator()(struct utsname *buf) {
+	long ret = syscall(SYS_UNAME, buf);
+	if (ret < 0) {
+		return -ret;
+	}
+	return 0;
+}
+
 #ifndef MLIBC_BUILDING_RTLD
 
-void sys_exit(int status){
+void Sysdeps<Exit>::operator()(int status){
 	syscall(SYS_EXIT_GROUP, status);
 
 	__builtin_unreachable();
 }
 
-pid_t sys_getpid(){
+pid_t Sysdeps<GetPid>::operator()(){
 	return syscall(SYS_GETPID);
 }
 
-pid_t sys_getppid(){
+pid_t Sysdeps<GetPpid>::operator()(){
 	return syscall(SYS_GETPPID);
 }
 
-pid_t sys_gettid(){
+pid_t Sysdeps<GetTid>::operator()(){
 	return syscall(SYS_GETTID);
 }
 
-int sys_clock_get(int clock, time_t *secs, long *nanos) {
+int Sysdeps<ClockGet>::operator()(int clock, time_t *secs, long *nanos) {
 	struct timespec ts;
 	long ret = syscall(SYS_CLOCK_GETTIME, clock, &ts);
 	if (ret < 0) {
@@ -258,7 +268,7 @@ int sys_clock_get(int clock, time_t *secs, long *nanos) {
 	return 0;
 }
 
-int sys_clock_getres(int clock, time_t *secs, long *nanos) {
+int Sysdeps<ClockGetres>::operator()(int clock, time_t *secs, long *nanos) {
 	struct timespec res;
 	long ret = syscall(SYS_CLOCK_GETRES, clock, &res);
 	if (ret < 0) {
@@ -269,7 +279,7 @@ int sys_clock_getres(int clock, time_t *secs, long *nanos) {
 	return 0;
 }
 
-int sys_getcwd(char *buffer, size_t size){
+int Sysdeps<GetCwd>::operator()(char *buffer, size_t size){
 	long ret = syscall(SYS_GET_CWD, buffer, size);
 	if (ret < 0) {
 		return -ret;
@@ -277,7 +287,7 @@ int sys_getcwd(char *buffer, size_t size){
 	return 0;
 }
 
-int sys_chdir(const char *path){
+int Sysdeps<Chdir>::operator()(const char *path){
 	long ret = syscall(SYS_CHDIR, path);
 	if (ret < 0) {
 		return -ret;
@@ -285,7 +295,7 @@ int sys_chdir(const char *path){
 	return 0;
 }
 
-int sys_sleep(time_t* sec, long* nanosec){
+int Sysdeps<Sleep>::operator()(time_t* sec, long* nanosec){
 	long ret = syscall(SYS_NANO_SLEEP, (*sec) * 1000000000 + (*nanosec));
 	if (ret < 0) {
 		return -ret;
@@ -293,58 +303,58 @@ int sys_sleep(time_t* sec, long* nanosec){
 	return 0;
 }
 
-int sys_setitimer(int which, const struct itimerval *new_value, struct itimerval *old_value) {
+int Sysdeps<SetItimer>::operator()(int which, const struct itimerval *new_value, struct itimerval *old_value) {
 	long ret = syscall(SYS_SETITIMER, which, new_value, old_value);
 	if (ret < 0)
 		return -ret;
 	return 0;
 }
 
-int sys_getitimer(int which, struct itimerval *curr_value) {
+int Sysdeps<GetItimer>::operator()(int which, struct itimerval *curr_value) {
 	long ret = syscall(SYS_GETITIMER, which, curr_value);
 	if (ret < 0)
 		return -ret;
 	return 0;
 }
 
-uid_t sys_getuid(){
+uid_t Sysdeps<GetUid>::operator()(){
 	return syscall(SYS_GETUID);
 }
 
-uid_t sys_geteuid(){
+uid_t Sysdeps<GetEuid>::operator()(){
 	return syscall(SYS_GETEUID);
 }
 
-int sys_setuid(uid_t uid){
+int Sysdeps<SetUid>::operator()(uid_t uid){
 	long ret = syscall(SYS_SETUID, uid);
 	if (ret < 0)
 		return -ret;
 	return 0;
 }
 
-int sys_seteuid(uid_t euid){
+int Sysdeps<SetEuid>::operator()(uid_t euid){
 	long ret = syscall(SYS_SETEUID, euid);
 	if (ret < 0)
 		return -ret;
 	return 0;
 }
 
-gid_t sys_getgid(){
+gid_t Sysdeps<GetGid>::operator()(){
 	return syscall(SYS_GETGID);
 }
 
-gid_t sys_getegid(){
+gid_t Sysdeps<GetEgid>::operator()(){
 	return syscall(SYS_GETEGID);
 }
 
-int sys_setpgid(pid_t pid, pid_t pgid) {
+int Sysdeps<SetPgid>::operator()(pid_t pid, pid_t pgid) {
 	long ret = syscall(SYS_SETPGID, pid, pgid);
 	if (ret < 0)
 		return -ret;
 	return 0;
 }
 
-int sys_getpgid(pid_t pid, pid_t *pgid) {
+int Sysdeps<GetPgid>::operator()(pid_t pid, pid_t *pgid) {
 	// Standard syscall: only pass pid, kernel returns PGID directly
 	long ret = syscall(SYS_GETPGID, pid);
 	if (ret < 0)
@@ -353,7 +363,7 @@ int sys_getpgid(pid_t pid, pid_t *pgid) {
 	return 0;
 }
 
-int sys_setgid(gid_t gid){
+int Sysdeps<SetGid>::operator()(gid_t gid){
 	long ret = syscall(SYS_SETGID, gid);
 	if (ret < 0) {
 		return -ret;
@@ -361,7 +371,7 @@ int sys_setgid(gid_t gid){
 	return 0;
 }
 
-int sys_setegid(gid_t egid){
+int Sysdeps<SetEgid>::operator()(gid_t egid){
 	long ret = syscall(SYS_SETEGID, egid);
 	if (ret < 0) {
 		return -ret;
@@ -369,7 +379,7 @@ int sys_setegid(gid_t egid){
 	return 0;
 }
 
-void sys_yield(){
+void Sysdeps<Yield>::operator()(){
 	syscall(SYS_YIELD);
 }
 
@@ -385,7 +395,7 @@ void sys_yield(){
 #define CLONE_CHILD_CLEARTID 0x00200000
 #define CLONE_CHILD_SETTID  0x01000000
 
-int sys_clone(void *tcb, pid_t *tid_out, void *stack){
+int Sysdeps<Clone>::operator()(void *tcb, pid_t *tid_out, void *stack){
 	//mlibc::infoLogger() << "mlibc: sys_clone entry tcb=" << (void*)tcb << " stack=" << (void*)stack << frg::endlog;
 	// Follow Linux mlibc threading flags:
 	// CLONE_VM | CLONE_FS | CLONE_FILES | CLONE_SIGHAND | CLONE_THREAD |
@@ -451,7 +461,7 @@ int sys_clone_linux(int (*fn)(void *), void *stack, int flags, void *arg,
 	return 0;
 }
 
-[[noreturn]] void sys_thread_exit(){
+[[noreturn]] void Sysdeps<ThreadExit>::operator()(){
 #if defined(__x86_64__)
 	__asm__ volatile(
 		"1:\n\t"
@@ -474,7 +484,7 @@ int sys_clone_linux(int (*fn)(void *), void *stack, int flags, void *arg,
 #endif
 }
 
-int sys_waitpid(pid_t pid, int *status, int flags, struct rusage *ru, pid_t *ret_pid){
+int Sysdeps<Waitpid>::operator()(pid_t pid, int *status, int flags, struct rusage *ru, pid_t *ret_pid){
 	pid_t ret = ru
 		? syscall(SYS_WAIT4, pid, status, flags, ru)
 		: syscall(SYS_WAIT_PID, pid, status, flags);
@@ -488,14 +498,14 @@ int sys_waitpid(pid_t pid, int *status, int flags, struct rusage *ru, pid_t *ret
 	return 0;
 }
 
-int sys_waitid(idtype_t idtype, id_t id, siginfo_t *info, int options) {
+int Sysdeps<Waitid>::operator()(idtype_t idtype, id_t id, siginfo_t *info, int options) {
 	long ret = syscall(SYS_WAITID, idtype, id, info, options);
 	if(ret < 0)
 		return -ret;
 	return 0;
 }
 
-int sys_pidfd_open(pid_t pid, unsigned int flags, int *outfd) {
+int Sysdeps<PidfdOpen>::operator()(pid_t pid, unsigned int flags, int *outfd) {
 	long ret = syscall(SYS_PIDFD_OPEN, pid, flags);
 	if(ret < 0)
 		return -ret;
@@ -503,7 +513,7 @@ int sys_pidfd_open(pid_t pid, unsigned int flags, int *outfd) {
 	return 0;
 }
 
-int sys_pidfd_getpid(int fd, pid_t *outpid) {
+int Sysdeps<PidfdGetpid>::operator()(int fd, pid_t *outpid) {
 	long ret = syscall(SYS_PIDFD_GETPID, fd);
 	if(ret < 0)
 		return -ret;
@@ -511,14 +521,14 @@ int sys_pidfd_getpid(int fd, pid_t *outpid) {
 	return 0;
 }
 
-int sys_pidfd_send_signal(int pidfd, int sig, siginfo_t *info, unsigned int flags) {
+int Sysdeps<PidfdSendSignal>::operator()(int pidfd, int sig, siginfo_t *info, unsigned int flags) {
 	long ret = syscall(SYS_PIDFD_SEND_SIGNAL, pidfd, sig, info, flags);
 	if(ret < 0)
 		return -ret;
 	return 0;
 }
 
-int sys_fork(pid_t *child){
+int Sysdeps<Fork>::operator()(pid_t *child){
 	int retries = 0;
 	while (true) {
 		long ret = syscall(SYS_FORK, 0);
@@ -536,7 +546,7 @@ int sys_fork(pid_t *child){
 	}
 }
 
-int sys_getpriority(int which, id_t who, int *value) {
+int Sysdeps<GetPriority>::operator()(int which, id_t who, int *value) {
 	// Linux ABI: kernel returns (20 - nice), clamped to [1, 40]. Negative
 	// result == -errno. mlibc translates back to raw nice for POSIX
 	// getpriority() callers; they disambiguate the -1 sentinel by clearing
@@ -550,7 +560,7 @@ int sys_getpriority(int which, id_t who, int *value) {
 	return 0;
 }
 
-int sys_setpriority(int which, id_t who, int prio) {
+int Sysdeps<SetPriority>::operator()(int which, id_t who, int prio) {
 	// Linux ABI: caller passes raw nice ([-20, 19]) directly; kernel clamps.
 	// No translation needed.
 	auto ret = syscalln3(SYS_SETPRIORITY, which, who, static_cast<uint64_t>(static_cast<int64_t>(prio)));
@@ -561,29 +571,21 @@ int sys_setpriority(int which, id_t who, int prio) {
 	return 0;
 }
 
-int sys_execve(const char *path, char *const argv[], char *const envp[]){
+int Sysdeps<Execve>::operator()(const char *path, char *const argv[], char *const envp[]){
 	long ret = syscall(SYS_EXECVE, path, argv, envp);
 	if (ret < 0)
 		return -ret;
 	return 0;
 }
 
-int sys_getentropy(void *buffer, size_t length){
+int Sysdeps<GetEntropy>::operator()(void *buffer, size_t length){
 	long ret = syscall(SYS_GETENTROPY, buffer, length);
 	if (ret < 0)
 		return -ret;
 	return 0;
 }
 
-int sys_uname(struct utsname *buf) {
-	long ret = syscall(SYS_UNAME, buf);
-	if (ret < 0) {
-		return -ret;
-	}
-	return 0;
-}
-
-int sys_getrlimit(int resource, struct rlimit *limit) {
+int Sysdeps<GetRlimit>::operator()(int resource, struct rlimit *limit) {
 	long ret = syscall(SYS_GET_RESOURCE_LIMIT, resource, limit);
 	if (ret < 0) {
 		return -ret;
@@ -591,7 +593,7 @@ int sys_getrlimit(int resource, struct rlimit *limit) {
 	return 0;
 }
 
-int sys_setrlimit(int resource, const struct rlimit *limit) {
+int Sysdeps<SetRlimit>::operator()(int resource, const struct rlimit *limit) {
 	long ret = syscall(SYS_SET_RESOURCE_LIMIT, resource, limit);
 	if (ret < 0) {
 		return -ret;
@@ -599,7 +601,7 @@ int sys_setrlimit(int resource, const struct rlimit *limit) {
 	return 0;
 }
 
-int sys_getrusage(int scope, struct rusage *usage) {
+int Sysdeps<GetRusage>::operator()(int scope, struct rusage *usage) {
 	long ret = syscall(SYS_GETRUSAGE, scope, usage);
 	if (ret < 0) {
 		return -ret;
@@ -617,7 +619,7 @@ int sys_prctl_args(int option, unsigned long arg2, unsigned long arg3,
 	return 0;
 }
 
-int sys_prctl(int option, va_list va, int *out) {
+int Sysdeps<Prctl>::operator()(int option, va_list va, int *out) {
 	unsigned long arg2 = 0;
 	unsigned long arg3 = 0;
 	unsigned long arg4 = 0;
@@ -641,7 +643,7 @@ int sys_prctl(int option, va_list va, int *out) {
 	return sys_prctl_args(option, arg2, arg3, arg4, arg5, out);
 }
 
-int sys_eventfd_create(unsigned int initval, int flags, int *fd) {
+int Sysdeps<EventfdCreate>::operator()(unsigned int initval, int flags, int *fd) {
 	long ret = syscall(SYS_EVENTFD, initval, flags);
 	if (ret < 0) {
 		return -ret;
@@ -650,7 +652,7 @@ int sys_eventfd_create(unsigned int initval, int flags, int *fd) {
 	return 0;
 }
 
-int sys_timerfd_create(int clockid, int flags, int *fd) {
+int Sysdeps<TimerfdCreate>::operator()(int clockid, int flags, int *fd) {
 	long ret = syscall(SYS_TIMERFD_CREATE, clockid, flags);
 	if (ret < 0) {
 		return -ret;
@@ -659,7 +661,7 @@ int sys_timerfd_create(int clockid, int flags, int *fd) {
 	return 0;
 }
 
-int sys_timerfd_settime(int fd, int flags, const struct itimerspec *value, struct itimerspec *oldvalue) {
+int Sysdeps<TimerfdSettime>::operator()(int fd, int flags, const struct itimerspec *value, struct itimerspec *oldvalue) {
 	long ret = syscall(SYS_TIMERFD_SETTIME, fd, flags, value, oldvalue);
 	if (ret < 0) {
 		return -ret;
@@ -667,7 +669,7 @@ int sys_timerfd_settime(int fd, int flags, const struct itimerspec *value, struc
 	return 0;
 }
 
-int sys_timerfd_gettime(int fd, struct itimerspec *its) {
+int Sysdeps<TimerfdGettime>::operator()(int fd, struct itimerspec *its) {
 	long ret = syscall(SYS_TIMERFD_GETTIME, fd, its);
 	if (ret < 0) {
 		return -ret;
@@ -675,7 +677,7 @@ int sys_timerfd_gettime(int fd, struct itimerspec *its) {
 	return 0;
 }
 
-int sys_signalfd_create(const sigset_t *mask, int flags, int *fd) {
+int Sysdeps<SignalfdCreate>::operator()(const sigset_t *mask, int flags, int *fd) {
 	long ret = syscall(SYS_SIGNALFD, mask, flags);
 	if (ret < 0) {
 		return -ret;
@@ -684,7 +686,7 @@ int sys_signalfd_create(const sigset_t *mask, int flags, int *fd) {
 	return 0;
 }
 
-int sys_setsid(pid_t *pid) {
+int Sysdeps<SetSid>::operator()(pid_t *pid) {
 	long ret = syscall(SYS_SETSID);
 	if (ret < 0) {
 		return -ret;
@@ -693,7 +695,7 @@ int sys_setsid(pid_t *pid) {
 	return 0;
 }
 
-int sys_getsid(pid_t pid, pid_t *sid) {
+int Sysdeps<GetSid>::operator()(pid_t pid, pid_t *sid) {
 	long ret = syscall(SYS_GETSID, pid);
 	if (ret < 0) {
 		return -ret;
@@ -702,7 +704,7 @@ int sys_getsid(pid_t pid, pid_t *sid) {
 	return 0;
 }
 
-int sys_reboot(int cmd) {
+int Sysdeps<Reboot>::operator()(int cmd) {
 	long ret = syscall(SYS_REBOOT, cmd);
 	if (ret < 0) {
 		return -ret;
@@ -726,7 +728,7 @@ int sys_sched_getaffinity(pid_t pid, size_t cpusetsize, cpu_set_t *mask) {
 	return 0;
 }
 
-int sys_getaffinity(pid_t pid, size_t cpusetsize, cpu_set_t *mask) {
+int Sysdeps<GetAffinity>::operator()(pid_t pid, size_t cpusetsize, cpu_set_t *mask) {
 	long ret = syscall(SYS_SCHED_GETAFFINITY, pid, cpusetsize, mask);
 	if (ret < 0) {
 		return -ret;
@@ -734,7 +736,7 @@ int sys_getaffinity(pid_t pid, size_t cpusetsize, cpu_set_t *mask) {
 	return 0;
 }
 
-int sys_setaffinity(pid_t pid, size_t cpusetsize, const cpu_set_t *mask) {
+int Sysdeps<SetAffinity>::operator()(pid_t pid, size_t cpusetsize, const cpu_set_t *mask) {
 	long ret = syscall(SYS_SCHED_SETAFFINITY, pid, cpusetsize, mask);
 	if (ret < 0) {
 		return -ret;
@@ -742,7 +744,7 @@ int sys_setaffinity(pid_t pid, size_t cpusetsize, const cpu_set_t *mask) {
 	return 0;
 }
 
-int sys_getthreadaffinity(pid_t tid, size_t cpusetsize, cpu_set_t *mask) {
+int Sysdeps<GetThreadaffinity>::operator()(pid_t tid, size_t cpusetsize, cpu_set_t *mask) {
 	long ret = syscall(SYS_SCHED_GETAFFINITY, tid, cpusetsize, mask);
 	if (ret < 0) {
 		return -ret;
@@ -750,7 +752,7 @@ int sys_getthreadaffinity(pid_t tid, size_t cpusetsize, cpu_set_t *mask) {
 	return 0;
 }
 
-int sys_setthreadaffinity(pid_t tid, size_t cpusetsize, const cpu_set_t *mask) {
+int Sysdeps<SetThreadaffinity>::operator()(pid_t tid, size_t cpusetsize, const cpu_set_t *mask) {
 	long ret = syscall(SYS_SCHED_SETAFFINITY, tid, cpusetsize, mask);
 	if (ret < 0) {
 		return -ret;
@@ -758,7 +760,7 @@ int sys_setthreadaffinity(pid_t tid, size_t cpusetsize, const cpu_set_t *mask) {
 	return 0;
 }
 
-int sys_getresuid(uid_t *ruid, uid_t *euid, uid_t *suid) {
+int Sysdeps<GetResuid>::operator()(uid_t *ruid, uid_t *euid, uid_t *suid) {
 	long ret = syscall(SYS_GETRESUID, ruid, euid, suid);
 	if (ret < 0) {
 		return -ret;
@@ -766,7 +768,7 @@ int sys_getresuid(uid_t *ruid, uid_t *euid, uid_t *suid) {
 	return 0;
 }
 
-int sys_setresuid(uid_t ruid, uid_t euid, uid_t suid) {
+int Sysdeps<SetResuid>::operator()(uid_t ruid, uid_t euid, uid_t suid) {
 	long ret = syscall(SYS_SETRESUID, ruid, euid, suid);
 	if (ret < 0) {
 		return -ret;
@@ -774,7 +776,7 @@ int sys_setresuid(uid_t ruid, uid_t euid, uid_t suid) {
 	return 0;
 }
 
-int sys_getresgid(gid_t *rgid, gid_t *egid, gid_t *sgid) {
+int Sysdeps<GetResgid>::operator()(gid_t *rgid, gid_t *egid, gid_t *sgid) {
 	long ret = syscall(SYS_GETRESGID, rgid, egid, sgid);
 	if (ret < 0) {
 		return -ret;
@@ -782,7 +784,7 @@ int sys_getresgid(gid_t *rgid, gid_t *egid, gid_t *sgid) {
 	return 0;
 }
 
-int sys_setresgid(gid_t rgid, gid_t egid, gid_t sgid) {
+int Sysdeps<SetResgid>::operator()(gid_t rgid, gid_t egid, gid_t sgid) {
 	long ret = syscall(SYS_SETRESGID, rgid, egid, sgid);
 	if (ret < 0) {
 		return -ret;
@@ -790,7 +792,7 @@ int sys_setresgid(gid_t rgid, gid_t egid, gid_t sgid) {
 	return 0;
 }
 
-int sys_getgroups(size_t size, gid_t *list, int *out) {
+int Sysdeps<GetGroups>::operator()(size_t size, gid_t *list, int *out) {
 	long ret = syscall(SYS_GETGROUPS, size, list);
 	if (ret < 0) {
 		return -ret;
@@ -799,7 +801,7 @@ int sys_getgroups(size_t size, gid_t *list, int *out) {
 	return 0;
 }
 
-int sys_setgroups(size_t gidsetsize, const gid_t *grouplist) {
+int Sysdeps<SetGroups>::operator()(size_t gidsetsize, const gid_t *grouplist) {
 	long ret = syscall(SYS_SETGROUPS, gidsetsize, grouplist);
 	if (ret < 0) {
 		return -ret;
@@ -807,7 +809,7 @@ int sys_setgroups(size_t gidsetsize, const gid_t *grouplist) {
 	return 0;
 }
 
-int sys_setreuid(uid_t ruid, uid_t euid) {
+int Sysdeps<SetReuid>::operator()(uid_t ruid, uid_t euid) {
 	long ret = syscall(SYS_SETREUID, ruid, euid);
 	if (ret < 0) {
 		return -ret;
@@ -815,7 +817,7 @@ int sys_setreuid(uid_t ruid, uid_t euid) {
 	return 0;
 }
 
-int sys_setregid(gid_t rgid, gid_t egid) {
+int Sysdeps<SetRegid>::operator()(gid_t rgid, gid_t egid) {
 	long ret = syscall(SYS_SETREGID, rgid, egid);
 	if (ret < 0) {
 		return -ret;
@@ -823,7 +825,7 @@ int sys_setregid(gid_t rgid, gid_t egid) {
 	return 0;
 }
 
-int sys_umask(mode_t mode, mode_t *old) {
+int Sysdeps<Umask>::operator()(mode_t mode, mode_t *old) {
 	long ret = syscall(SYS_UMASK, mode);
 	if (ret < 0) {
 		return -ret;
@@ -834,13 +836,13 @@ int sys_umask(mode_t mode, mode_t *old) {
 }
 
 #if __MLIBC_BSD_OPTION
-int sys_brk(void **out) {
+int Sysdeps<Brk>::operator()(void **out) {
 	(void)out;
 	return ENOSYS;
 }
 #endif
 
-int sys_getcpu(int *cpu) {
+int Sysdeps<Getcpu>::operator()(int *cpu) {
 	long result = syscall(SYS_GETCPU, cpu, nullptr);
 	if (result < 0) {
 		return -result;
@@ -865,7 +867,7 @@ int sys_get_mempolicy(int *mode, unsigned long *nodemask, unsigned long maxnode,
 	return 0;
 }
 
-int sys_memfd_create(const char *name, int flags, int *fd) {
+int Sysdeps<MemfdCreate>::operator()(const char *name, int flags, int *fd) {
 	long result = syscall(SYS_MEMFD_CREATE, name, flags);
 	if (result < 0) {
 		return -result;
@@ -874,7 +876,7 @@ int sys_memfd_create(const char *name, int flags, int *fd) {
 	return 0;
 }
 
-int sys_get_max_priority(int policy, int *out) {
+int Sysdeps<GetMaxPriority>::operator()(int policy, int *out) {
 	if (!out)
 		return EINVAL;
 	long ret = syscall(SYS_GETPRIORITYMAX, policy, out);
@@ -884,7 +886,7 @@ int sys_get_max_priority(int policy, int *out) {
 	return 0;
 }
 
-int sys_get_min_priority(int policy, int *out) {
+int Sysdeps<GetMinPriority>::operator()(int policy, int *out) {
 	if (!out)
 		return EINVAL;
 	long ret = syscall(SYS_GETPRIORITYMIN, policy, out);
@@ -894,7 +896,7 @@ int sys_get_min_priority(int policy, int *out) {
 	return 0;
 }
 
-int sys_getschedparam(void *tcb, int *policy, struct sched_param *param) {
+int Sysdeps<GetSchedparam>::operator()(void *tcb, int *policy, struct sched_param *param) {
 	auto *t = reinterpret_cast<Tcb *>(tcb);
 	int kern_policy = 0;
 	int kern_priority = 0;
@@ -911,7 +913,7 @@ int sys_getschedparam(void *tcb, int *policy, struct sched_param *param) {
 	return 0;
 }
 
-int sys_getscheduler(pid_t pid, int *policy) {
+int Sysdeps<GetScheduler>::operator()(pid_t pid, int *policy) {
 	if (!policy)
 		return EINVAL;
 
@@ -923,7 +925,7 @@ int sys_getscheduler(pid_t pid, int *policy) {
 	return 0;
 }
 
-int sys_setscheduler(pid_t pid, int policy, const struct sched_param *param) {
+int Sysdeps<SetScheduler>::operator()(pid_t pid, int policy, const struct sched_param *param) {
 	int priority = param ? param->sched_priority : 0;
 
 	long ret = syscall(SYS_SETSCHEDPARAM, pid, policy, priority);
@@ -933,7 +935,7 @@ int sys_setscheduler(pid_t pid, int policy, const struct sched_param *param) {
 	return 0;
 }
 
-int sys_getparam(pid_t pid, struct sched_param *param) {
+int Sysdeps<GetParam>::operator()(pid_t pid, struct sched_param *param) {
 	if (!param)
 		return EINVAL;
 
@@ -945,7 +947,7 @@ int sys_getparam(pid_t pid, struct sched_param *param) {
 	return 0;
 }
 
-int sys_setparam(pid_t pid, const struct sched_param *param) {
+int Sysdeps<SetParam>::operator()(pid_t pid, const struct sched_param *param) {
 	int policy = 0;
 	long get_ret = syscall(SYS_GETSCHEDPARAM, pid, &policy, nullptr);
 	if (get_ret < 0) {
@@ -960,7 +962,7 @@ int sys_setparam(pid_t pid, const struct sched_param *param) {
 	return 0;
 }
 
-int sys_setschedparam(void *tcb, int policy, const struct sched_param *param) {
+int Sysdeps<SetSchedparam>::operator()(void *tcb, int policy, const struct sched_param *param) {
 	auto *t = reinterpret_cast<Tcb *>(tcb);
 	int priority = param ? param->sched_priority : 0;
 
@@ -1002,7 +1004,7 @@ static int fetch_sysinfo(unified_sysinfo *out) {
 	return 0;
 }
 
-int sys_sysconf(int num, long *ret) {
+int Sysdeps<Sysconf>::operator()(int num, long *ret) {
 	// Prefer direct kernel system info for memory/cpu-related sysconf values.
 	if (num == _SC_PHYS_PAGES || num == _SC_AVPHYS_PAGES
 			|| num == _SC_NPROCESSORS_CONF || num == _SC_NPROCESSORS_ONLN) {
@@ -1037,7 +1039,7 @@ int sys_sysconf(int num, long *ret) {
 	return 0;
 }
 
-int sys_thread_setname(void *tcb, const char *name) {
+int Sysdeps<ThreadSetname>::operator()(void *tcb, const char *name) {
 	if(!name)
 		return EINVAL;
 
@@ -1052,7 +1054,7 @@ int sys_thread_setname(void *tcb, const char *name) {
 	return 0;
 }
 
-int sys_thread_getname(void *tcb, char *name, size_t size) {
+int Sysdeps<ThreadGetname>::operator()(void *tcb, char *name, size_t size) {
 	long ret = syscall(SYS_GETTIDID, name, size);
 	if (ret < 0) {
 		return -ret;
@@ -1060,7 +1062,7 @@ int sys_thread_getname(void *tcb, char *name, size_t size) {
 	return 0;
 }
 
-int sys_sysinfo(struct sysinfo *info) {
+int Sysdeps<Sysinfo>::operator()(struct sysinfo *info) {
 	if (!info)
 		return EINVAL;
 
@@ -1135,7 +1137,7 @@ int sys_sysinfo(struct sysinfo *info) {
 }
 
 #if __MLIBC_BSD_OPTION
-int sys_getloadavg(double *samples) {
+int Sysdeps<GetLoadavg>::operator()(double *samples) {
 	// No kernel load tracking - report idle system
 	samples[0] = 0.0;
 	samples[1] = 0.0;

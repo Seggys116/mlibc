@@ -1,5 +1,9 @@
 #include <unified/syscall.h>
 
+#ifndef _DEFAULT_SOURCE
+#define _DEFAULT_SOURCE
+#endif
+
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/ioctl.h>
@@ -20,10 +24,7 @@ namespace {
 int fcntl_helper(int fd, int request, int *result, ...) {
 	va_list args;
 	va_start(args, result);
-	if(!mlibc::sys_fcntl) {
-		return ENOSYS;
-	}
-	int ret = mlibc::sys_fcntl(fd, request, args, result);
+	int ret = mlibc::Sysdeps<Fcntl>::operator()(fd, request, args, result);
 	va_end(args);
 	return ret;
 }
@@ -32,9 +33,9 @@ int fcntl_helper(int fd, int request, int *result, ...) {
 
 namespace mlibc{
 
-int sys_if_indextoname(unsigned int index, char *name) {
+int Sysdeps<IfIndextoname>::operator()(unsigned int index, char *name) {
 	int fd = 0;
-	int r = sys_socket(AF_UNIX, SOCK_DGRAM | SOCK_CLOEXEC, AF_UNSPEC, &fd);
+	int r = Sysdeps<Socket>::operator()(AF_UNIX, SOCK_DGRAM | SOCK_CLOEXEC, AF_UNSPEC, &fd);
 
 	if(r)
 		return r;
@@ -43,7 +44,7 @@ int sys_if_indextoname(unsigned int index, char *name) {
 	ifr.ifr_ifindex = index;
 
 	int res = 0;
-	int ret = sys_ioctl(fd, SIOCGIFNAME, &ifr, &res);
+	int ret = Sysdeps<Ioctl>::operator()(fd, SIOCGIFNAME, &ifr, &res);
 	close(fd);
 
 	if(ret) {
@@ -57,9 +58,9 @@ int sys_if_indextoname(unsigned int index, char *name) {
 	return 0;
 }
 
-int sys_if_nametoindex(const char *name, unsigned int *ret) {
+int Sysdeps<IfNametoindex>::operator()(const char *name, unsigned int *ret) {
 	int fd = 0;
-	int r = sys_socket(AF_UNIX, SOCK_DGRAM | SOCK_CLOEXEC, AF_UNSPEC, &fd);
+	int r = Sysdeps<Socket>::operator()(AF_UNIX, SOCK_DGRAM | SOCK_CLOEXEC, AF_UNSPEC, &fd);
 
 	if(r)
 		return r;
@@ -69,7 +70,7 @@ int sys_if_nametoindex(const char *name, unsigned int *ret) {
 	ifr.ifr_name[sizeof(ifr.ifr_name) - 1] = '\0';
 
 	int res = 0;
-	r = sys_ioctl(fd, SIOCGIFINDEX, &ifr, &res);
+	r = Sysdeps<Ioctl>::operator()(fd, SIOCGIFINDEX, &ifr, &res);
 	close(fd);
 
 	if(r)
@@ -79,7 +80,7 @@ int sys_if_nametoindex(const char *name, unsigned int *ret) {
 	return 0;
 }
 
-int sys_getifaddrs(struct ifaddrs **out) {
+int Sysdeps<Getifaddrs>::operator()(struct ifaddrs **out) {
 	*out = nullptr;
 
 	NetlinkHelper nl;
@@ -91,7 +92,7 @@ int sys_getifaddrs(struct ifaddrs **out) {
 	return 0;
 }
 
-int sys_socket(int domain, int type, int protocol, int *fd){
+int Sysdeps<Socket>::operator()(int domain, int type, int protocol, int *fd){
     long ret = syscall(SYS_SOCKET, domain, type, protocol);
 
     if(ret < 0){
@@ -102,7 +103,7 @@ int sys_socket(int domain, int type, int protocol, int *fd){
     return 0;
 }
 
-int sys_bind(int sockfd, const struct sockaddr *addr_ptr, socklen_t addrlen){
+int Sysdeps<Bind>::operator()(int sockfd, const struct sockaddr *addr_ptr, socklen_t addrlen){
     long ret = syscall(SYS_BIND, sockfd, addr_ptr, addrlen);
 
     if(ret < 0){
@@ -112,7 +113,7 @@ int sys_bind(int sockfd, const struct sockaddr *addr_ptr, socklen_t addrlen){
     return 0;
 }
 
-int sys_connect(int sockfd, const struct sockaddr *addr_ptr, socklen_t addrlen){
+int Sysdeps<Connect>::operator()(int sockfd, const struct sockaddr *addr_ptr, socklen_t addrlen){
     long ret = syscall(SYS_CONNECT, sockfd, addr_ptr, addrlen);
 
     if(ret < 0){
@@ -122,7 +123,7 @@ int sys_connect(int sockfd, const struct sockaddr *addr_ptr, socklen_t addrlen){
     return 0;
 }
 
-int sys_accept(int fd, int *newfd, struct sockaddr *addr_ptr, socklen_t *addr_length, int flags){
+int Sysdeps<Accept>::operator()(int fd, int *newfd, struct sockaddr *addr_ptr, socklen_t *addr_length, int flags){
     long ret = syscall(SYS_ACCEPT, fd, addr_ptr, addr_length);
 
     if(ret < 0){
@@ -135,12 +136,12 @@ int sys_accept(int fd, int *newfd, struct sockaddr *addr_ptr, socklen_t *addr_le
 		int fcntl_ret = 0;
 		int err = fcntl_helper(*newfd, F_GETFL, &fcntl_ret);
 		if(err) {
-			mlibc::sys_close(*newfd);
+			mlibc::Sysdeps<Close>::operator()(*newfd);
 			return err;
 		}
 		err = fcntl_helper(*newfd, F_SETFL, &fcntl_ret, fcntl_ret | O_NONBLOCK);
 		if(err) {
-			mlibc::sys_close(*newfd);
+			mlibc::Sysdeps<Close>::operator()(*newfd);
 			return err;
 		}
 	}
@@ -149,12 +150,12 @@ int sys_accept(int fd, int *newfd, struct sockaddr *addr_ptr, socklen_t *addr_le
 		int fcntl_ret = 0;
 		int err = fcntl_helper(*newfd, F_GETFD, &fcntl_ret);
 		if(err) {
-			mlibc::sys_close(*newfd);
+			mlibc::Sysdeps<Close>::operator()(*newfd);
 			return err;
 		}
 		err = fcntl_helper(*newfd, F_SETFD, &fcntl_ret, fcntl_ret | FD_CLOEXEC);
 		if(err) {
-			mlibc::sys_close(*newfd);
+			mlibc::Sysdeps<Close>::operator()(*newfd);
 			return err;
 		}
 	}
@@ -162,7 +163,7 @@ int sys_accept(int fd, int *newfd, struct sockaddr *addr_ptr, socklen_t *addr_le
     return 0;
 }
 
-int sys_listen(int fd, int backlog){
+int Sysdeps<Listen>::operator()(int fd, int backlog){
     long ret = syscall(SYS_LISTEN, fd, backlog);
 
     if(ret < 0){
@@ -172,7 +173,7 @@ int sys_listen(int fd, int backlog){
     return 0;
 }
 
-int sys_msg_recv(int sockfd, struct msghdr *hdr, int flags, ssize_t *length){
+int Sysdeps<MsgRecv>::operator()(int sockfd, struct msghdr *hdr, int flags, ssize_t *length){
     long ret = syscall(SYS_RECVMSG, sockfd, hdr, flags);
 
     if(ret < 0){
@@ -184,7 +185,7 @@ int sys_msg_recv(int sockfd, struct msghdr *hdr, int flags, ssize_t *length){
     return 0;
 }
 
-int sys_msg_send(int sockfd, const struct msghdr *hdr, int flags, ssize_t *length){
+int Sysdeps<MsgSend>::operator()(int sockfd, const struct msghdr *hdr, int flags, ssize_t *length){
     long ret = syscall(SYS_SENDMSG, sockfd, hdr, flags);
 
     if(ret < 0){
@@ -196,7 +197,7 @@ int sys_msg_send(int sockfd, const struct msghdr *hdr, int flags, ssize_t *lengt
     return 0;
 }
 
-int sys_setsockopt(int fd, int layer, int number, const void *buffer, socklen_t size){
+int Sysdeps<SetSockopt>::operator()(int fd, int layer, int number, const void *buffer, socklen_t size){
     long ret = syscall(SYS_SET_SOCKET_OPTIONS, fd, layer, number, buffer, size);
 
     if(ret < 0){
@@ -206,7 +207,7 @@ int sys_setsockopt(int fd, int layer, int number, const void *buffer, socklen_t 
     return 0;
 }
 
-int sys_getsockopt(int fd, int layer, int number, void *__restrict buffer, socklen_t *__restrict size){
+int Sysdeps<GetSockopt>::operator()(int fd, int layer, int number, void *__restrict buffer, socklen_t *__restrict size){
     long ret = syscall(SYS_GET_SOCKET_OPTIONS, fd, layer, number, buffer, size);
 
     if(ret < 0){
@@ -216,7 +217,7 @@ int sys_getsockopt(int fd, int layer, int number, void *__restrict buffer, sockl
     return 0;
 }
 
-int sys_socketpair(int domain, int type_and_flags, int proto, int *fds){
+int Sysdeps<Socketpair>::operator()(int domain, int type_and_flags, int proto, int *fds){
     long ret = syscall(SYS_SOCKETPAIR, domain, type_and_flags, proto, fds);
     if(ret < 0){
         return -ret;
@@ -224,7 +225,7 @@ int sys_socketpair(int domain, int type_and_flags, int proto, int *fds){
     return 0;
 }
 
-int sys_sockname(int fd, struct sockaddr *addr_ptr, socklen_t max_addr_length,
+int Sysdeps<Sockname>::operator()(int fd, struct sockaddr *addr_ptr, socklen_t max_addr_length,
     socklen_t *actual_length) {
     long ret = syscall(SYS_SOCKNAME, fd, addr_ptr, max_addr_length);
     if (ret < 0) {
@@ -246,7 +247,7 @@ int sys_sockname(int fd, struct sockaddr *addr_ptr, socklen_t max_addr_length,
     return 0;
 }
 
-int sys_peername(int fd, struct sockaddr *addr_ptr, socklen_t max_addr_length,
+int Sysdeps<Peername>::operator()(int fd, struct sockaddr *addr_ptr, socklen_t max_addr_length,
     socklen_t *actual_length) {
     long ret = syscall(SYS_PEERNAME, fd, addr_ptr, max_addr_length);
     if (ret < 0) {
@@ -268,7 +269,7 @@ int sys_peername(int fd, struct sockaddr *addr_ptr, socklen_t max_addr_length,
     return 0;
 }
 
-ssize_t sys_sendto(int fd, const void *buffer, size_t size, int flags,
+int Sysdeps<Sendto>::operator()(int fd, const void *buffer, size_t size, int flags,
     const struct sockaddr *sock_addr, socklen_t addr_length, ssize_t *length) {
     long ret = syscall(SYS_SENDTO, fd, buffer, size, flags, sock_addr, addr_length);
 
@@ -280,7 +281,7 @@ ssize_t sys_sendto(int fd, const void *buffer, size_t size, int flags,
     return 0;
 }
 
-ssize_t sys_recvfrom(int fd, void *buffer, size_t size, int flags,
+int Sysdeps<Recvfrom>::operator()(int fd, void *buffer, size_t size, int flags,
     struct sockaddr *sock_addr, socklen_t *addr_length, ssize_t *length) {
     long ret = syscall(SYS_RECEIVEFROM, fd, buffer, size, flags, sock_addr, addr_length);
 
@@ -292,7 +293,7 @@ ssize_t sys_recvfrom(int fd, void *buffer, size_t size, int flags,
     return 0;
 }
 
-int sys_shutdown(int sockfd, int how) {
+int Sysdeps<Shutdown>::operator()(int sockfd, int how) {
     long ret = syscall(SYS_SHUTDOWN, sockfd, how);
 
     if (ret < 0) {
@@ -302,7 +303,7 @@ int sys_shutdown(int sockfd, int how) {
     return 0;
 }
 
-int sys_inet_configured(bool *ipv4, bool *ipv6) {
+int Sysdeps<InetConfigured>::operator()(bool *ipv4, bool *ipv6) {
 	struct context {
 		bool *ipv4;
 		bool *ipv6;
@@ -327,7 +328,7 @@ int sys_inet_configured(bool *ipv4, bool *ipv6) {
 				struct context *ctx = reinterpret_cast<struct context *>(data);
 
 				char name[IF_NAMESIZE];
-				auto interface_name_result = sys_if_indextoname(ifaddr->ifa_index, name);
+				auto interface_name_result = Sysdeps<IfIndextoname>::operator()(ifaddr->ifa_index, name);
 
 				if(interface_name_result || !strncmp(name, "lo", IF_NAMESIZE))
 					return;

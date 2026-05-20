@@ -39,7 +39,7 @@ typedef struct {
 	int64_t st_ctime_nsec;
 } unified_stat_t;
 
-int sys_write(int fd, const void* buffer, size_t count, ssize_t* written){
+int Sysdeps<Write>::operator()(int fd, const void* buffer, size_t count, ssize_t* written){
 	long ret = syscall(SYS_WRITE, fd, (uintptr_t)buffer, count);
 
 	if(ret < 0)
@@ -49,7 +49,7 @@ int sys_write(int fd, const void* buffer, size_t count, ssize_t* written){
 	return 0;
 }
 
-int sys_read(int fd, void *buf, size_t count, ssize_t *bytes_read) {
+int Sysdeps<Read>::operator()(int fd, void *buf, size_t count, ssize_t *bytes_read) {
 	long ret = syscall(SYS_READ, fd, (uintptr_t)buf, count);
 
 	if(ret < 0){
@@ -61,7 +61,7 @@ int sys_read(int fd, void *buf, size_t count, ssize_t *bytes_read) {
 	return 0;
 }
 
-int sys_pwrite(int fd, const void* buffer, size_t count, off_t off, ssize_t* written){
+int Sysdeps<Pwrite>::operator()(int fd, const void* buffer, size_t count, off_t off, ssize_t* written){
 	int ret = syscall(SYS_PWRITE, fd, (uintptr_t)buffer, count, off);
 
 
@@ -73,7 +73,7 @@ int sys_pwrite(int fd, const void* buffer, size_t count, off_t off, ssize_t* wri
 	return 0;
 }
 
-int sys_pread(int fd, void *buf, size_t count, off_t off, ssize_t *bytes_read) {
+int Sysdeps<Pread>::operator()(int fd, void *buf, size_t count, off_t off, ssize_t *bytes_read) {
 	int ret = syscall(SYS_PREAD, fd, (uintptr_t)buf, count, off);
 
 	if(ret < 0){
@@ -84,7 +84,7 @@ int sys_pread(int fd, void *buf, size_t count, off_t off, ssize_t *bytes_read) {
 	return 0;
 }
 
-int sys_seek(int fd, off_t offset, int whence, off_t *new_offset) {
+int Sysdeps<Seek>::operator()(int fd, off_t offset, int whence, off_t *new_offset) {
 	long ret = syscall(SYS_LSEEK, fd, offset, whence);
 
 	if(ret < 0){
@@ -96,7 +96,7 @@ int sys_seek(int fd, off_t offset, int whence, off_t *new_offset) {
 }
 
 
-int sys_open(const char* filename, int flags, mode_t mode, int* fd){
+int Sysdeps<Open>::operator()(const char* filename, int flags, mode_t mode, int* fd){
 	long ret = syscall(SYS_OPEN, (uintptr_t)filename, flags, mode);
 
 	if(ret < 0)
@@ -107,7 +107,7 @@ int sys_open(const char* filename, int flags, mode_t mode, int* fd){
 	return 0;
 }
 
-int sys_openat(int dirfd, const char* path, int flags, mode_t mode, int *fd) {
+int Sysdeps<Openat>::operator()(int dirfd, const char* path, int flags, mode_t mode, int *fd) {
     long ret = syscall(SYS_OPENAT, dirfd, (uintptr_t)path, flags, mode);
     if (ret < 0)
         return -ret;
@@ -115,7 +115,7 @@ int sys_openat(int dirfd, const char* path, int flags, mode_t mode, int *fd) {
     return 0;
 }
 
-int sys_close(int fd){
+int Sysdeps<Close>::operator()(int fd){
 	long ret = syscall(SYS_CLOSE, fd);
 	if (ret < 0) {
 		return -ret;
@@ -123,17 +123,17 @@ int sys_close(int fd){
 	return 0;
 }
 
-int sys_access(const char* filename, int mode){
+int Sysdeps<Access>::operator()(const char* filename, int mode){
 	int fd;
-	if(int e = sys_open(filename, O_RDONLY, 0, &fd)){
+	if(int e = Sysdeps<Open>::operator()(filename, O_RDONLY, 0, &fd)){
 		return e;
 	}
 
-	sys_close(fd);
+	Sysdeps<Close>::operator()(fd);
 	return 0;
 }
 
-int sys_stat(fsfd_target fsfdt, int fd, const char *path, int flags, struct stat *statbuf){
+int Sysdeps<Stat>::operator()(fsfd_target fsfdt, int fd, const char *path, int flags, struct stat *statbuf){
 	long ret = 0;
 
 	unified_stat_t unifiedStat;
@@ -191,7 +191,7 @@ int sys_stat(fsfd_target fsfdt, int fd, const char *path, int flags, struct stat
 }
 
 #if __MLIBC_LINUX_OPTION
-int sys_statx(int dirfd, const char *pathname, int flags, unsigned int mask, struct statx *statxbuf) {
+int Sysdeps<Statx>::operator()(int dirfd, const char *pathname, int flags, unsigned int mask, struct statx *statxbuf) {
 	if(!statxbuf)
 		return EFAULT;
 
@@ -207,11 +207,11 @@ int sys_statx(int dirfd, const char *pathname, int flags, unsigned int mask, str
 	int e = 0;
 
 	if((flags & AT_EMPTY_PATH) && (!pathname || !pathname[0])) {
-		e = mlibc::sys_stat(fsfd_target::fd, dirfd, nullptr, 0, &statbuf_storage);
+		e = mlibc::Sysdeps<Stat>::operator()(fsfd_target::fd, dirfd, nullptr, 0, &statbuf_storage);
 	}else if(dirfd == AT_FDCWD) {
-		e = mlibc::sys_stat(fsfd_target::path, 0, pathname, stat_flags, &statbuf_storage);
+		e = mlibc::Sysdeps<Stat>::operator()(fsfd_target::path, 0, pathname, stat_flags, &statbuf_storage);
 	}else{
-		e = mlibc::sys_stat(fsfd_target::fd_path, dirfd, pathname, stat_flags, &statbuf_storage);
+		e = mlibc::Sysdeps<Stat>::operator()(fsfd_target::fd_path, dirfd, pathname, stat_flags, &statbuf_storage);
 	}
 
 	if(e)
@@ -247,7 +247,7 @@ int sys_statx(int dirfd, const char *pathname, int flags, unsigned int mask, str
 }
 #endif
 
-int sys_ioctl(int fd, unsigned long request, void *arg, int *result){
+int Sysdeps<Ioctl>::operator()(int fd, unsigned long request, void *arg, int *result){
 	long ret = syscall(SYS_IOCTL, fd, request, arg, result);
 
 	if(ret < 0)
@@ -256,11 +256,9 @@ int sys_ioctl(int fd, unsigned long request, void *arg, int *result){
 	return 0;
 }
 
-int sys_mkdirat(int dirfd, const char *path, mode_t mode);
-
 #ifndef MLIBC_BUILDING_RTLD
 
-int sys_poll(struct pollfd *fds, nfds_t count, int timeout, int *num_events){
+int Sysdeps<Poll>::operator()(struct pollfd *fds, nfds_t count, int timeout, int *num_events){
 	long ret = syscall(SYS_POLL, fds, count, timeout);
 
 	if(ret < 0){
@@ -272,7 +270,7 @@ int sys_poll(struct pollfd *fds, nfds_t count, int timeout, int *num_events){
 	return 0;
 }
 
-int sys_mkdir(const char* path, mode_t){
+int Sysdeps<Mkdir>::operator()(const char* path, mode_t){
 	long ret = syscall(SYS_MKDIR, path);
 	if(ret < 0){
 		return -ret;
@@ -280,7 +278,7 @@ int sys_mkdir(const char* path, mode_t){
 	return 0;
 }
 
-int sys_mkdirat(int dirfd, const char *path, mode_t mode)
+int Sysdeps<Mkdirat>::operator()(int dirfd, const char *path, mode_t mode)
 {
     long ret = syscall(SYS_MKDIRAT, dirfd, (uintptr_t)path, mode);
     if (ret < 0)
@@ -288,7 +286,7 @@ int sys_mkdirat(int dirfd, const char *path, mode_t mode)
     return 0;
 }
 
-int sys_sendfile(int out_fd, int in_fd, off_t *offset, size_t count, ssize_t *bytes_sent) {
+int Sysdeps<Sendfile>::operator()(int out_fd, int in_fd, off_t *offset, size_t count, ssize_t *bytes_sent) {
     long ret = syscall(SYS_SENDFILE, out_fd, in_fd, (uintptr_t)offset, count);
     if (ret < 0) {
         return (int)(-ret);
@@ -297,7 +295,7 @@ int sys_sendfile(int out_fd, int in_fd, off_t *offset, size_t count, ssize_t *by
     return 0;
 }
 
-int sys_copy_file_range(int fd_in, off_t *off_in, int fd_out, off_t *off_out, size_t len, unsigned flags, ssize_t *bytes_copied) {
+int Sysdeps<CopyFileRange>::operator()(int fd_in, off_t *off_in, int fd_out, off_t *off_out, size_t len, unsigned flags, ssize_t *bytes_copied) {
     long ret = syscall(SYS_COPY_FILE_RANGE,
                        fd_in,
                        (uintptr_t)off_in,
@@ -312,7 +310,7 @@ int sys_copy_file_range(int fd_in, off_t *off_in, int fd_out, off_t *off_out, si
     return 0;
 }
 
-int sys_rmdir(const char* path){
+int Sysdeps<Rmdir>::operator()(const char* path){
 	long ret = syscall(SYS_RMDIR, path);
 
 	if(ret < 0){
@@ -322,7 +320,7 @@ int sys_rmdir(const char* path){
 	return 0;
 }
 
-int sys_link(const char* srcpath, const char* destpath){
+int Sysdeps<Link>::operator()(const char* srcpath, const char* destpath){
 	long ret = syscall(SYS_LINK, srcpath, destpath);
 
 	if(ret < 0){
@@ -332,7 +330,7 @@ int sys_link(const char* srcpath, const char* destpath){
 	return 0;
 }
 
-int sys_unlinkat(int fd, const char *path, int flags) {
+int Sysdeps<Unlinkat>::operator()(int fd, const char *path, int flags) {
 	long ret = syscall(SYS_UNLINK, fd, path, flags);
 
 	if(ret < 0) {
@@ -342,11 +340,11 @@ int sys_unlinkat(int fd, const char *path, int flags) {
 	return 0;
 }
 
-int sys_open_dir(const char* path, int* handle){
-	return sys_open(path, O_DIRECTORY, 0, handle);
+int Sysdeps<OpenDir>::operator()(const char* path, int* handle){
+	return Sysdeps<Open>::operator()(path, O_DIRECTORY, 0, handle);
 }
 
-int sys_rename(const char* path, const char* new_path){
+int Sysdeps<Rename>::operator()(const char* path, const char* new_path){
 	long ret = syscall(SYS_RENAME, path, new_path);
 	if(ret < 0){
 		return -ret;
@@ -354,7 +352,15 @@ int sys_rename(const char* path, const char* new_path){
 	return 0;
 }
 
-int sys_readlink(const char *path, void *buffer, size_t max_size, ssize_t *length){
+int Sysdeps<Renameat>::operator()(int olddirfd, const char *old_path, int newdirfd, const char *new_path) {
+	long ret = syscall(SYS_RENAME_AT, olddirfd, old_path, newdirfd, new_path);
+	if(ret < 0) {
+		return -ret;
+	}
+	return 0;
+}
+
+int Sysdeps<Readlink>::operator()(const char *path, void *buffer, size_t max_size, ssize_t *length){
 	long ret = syscall(SYS_READLINK, path, buffer, max_size);
 	if(ret < 0){
 		return -ret;
@@ -364,7 +370,7 @@ int sys_readlink(const char *path, void *buffer, size_t max_size, ssize_t *lengt
 	return 0;
 }
 
-int sys_dup(int fd, int flags, int* newfd){
+int Sysdeps<Dup>::operator()(int fd, int flags, int* newfd){
 	int ret = syscall(SYS_DUP, fd, flags, -1);
 	if(ret < 0){
 		return -ret;
@@ -374,7 +380,7 @@ int sys_dup(int fd, int flags, int* newfd){
 	return 0;
 }
 
-int sys_dup2(int fd, int flags, int newfd){
+int Sysdeps<Dup2>::operator()(int fd, int flags, int newfd){
 	int ret = syscall(SYS_DUP, fd, flags, newfd);
 	if(ret < 0){
 		return -ret;
@@ -389,7 +395,7 @@ typedef struct unified_dirent {
 	char name[NAME_MAX]; // Filename
 } unified_dirent_t;
 
-int sys_read_entries(int handle, void *buffer, size_t max_size, size_t *bytes_read) {
+int Sysdeps<ReadEntries>::operator()(int handle, void *buffer, size_t max_size, size_t *bytes_read) {
     size_t total_bytes = 0;
     char *out_buf = reinterpret_cast<char *>(buffer);
 
@@ -428,7 +434,7 @@ int sys_read_entries(int handle, void *buffer, size_t max_size, size_t *bytes_re
     return 0;
 }
 
-int sys_mount(const char *source, const char *target, const char *fstype, unsigned long flags, const void *data)
+int Sysdeps<Mount>::operator()(const char *source, const char *target, const char *fstype, unsigned long flags, const void *data)
 {
     long ret = syscall(SYS_MOUNT,
                        (uintptr_t)source,
@@ -442,7 +448,7 @@ int sys_mount(const char *source, const char *target, const char *fstype, unsign
     return 0;
 }
 
-int sys_umount2(const char *target, int flags) {
+int Sysdeps<Umount2>::operator()(const char *target, int flags) {
 	long ret = syscall(SYS_UNMOUNT, target, flags);
 	if (ret < 0) {
         return -ret;   // return positive errno
@@ -450,7 +456,7 @@ int sys_umount2(const char *target, int flags) {
 	return 0;
 }
 
-int sys_fcntl(int fd, int request, va_list args, int* result){
+int Sysdeps<Fcntl>::operator()(int fd, int request, va_list args, int* result){
 	if(request == F_DUPFD){
 		int minfd = va_arg(args, int);
 		int ret = syscall(SYS_FCNTL, fd, F_DUPFD, minfd);
@@ -470,9 +476,9 @@ int sys_fcntl(int fd, int request, va_list args, int* result){
 		return 0;
 	} else if(request == F_SETFD){
 		if(va_arg(args, int) & FD_CLOEXEC) {
-			return sys_ioctl(fd, FIOCLEX, NULL, result);
+			return Sysdeps<Ioctl>::operator()(fd, FIOCLEX, NULL, result);
 		} else {
-			return sys_ioctl(fd, FIONCLEX, NULL, result);
+			return Sysdeps<Ioctl>::operator()(fd, FIONCLEX, NULL, result);
 		}
 	} else if(request == F_GETFL){
 		int ret = syscall(SYS_GET_FILE_STATUS_FLAGS, fd);
@@ -534,7 +540,7 @@ int sys_fcntl(int fd, int request, va_list args, int* result){
 	}
 }
 
-int sys_pselect(int nfds, fd_set* readfds, fd_set* writefds,
+int Sysdeps<Pselect>::operator()(int nfds, fd_set* readfds, fd_set* writefds,
 	fd_set *exceptfds, const struct timespec* timeout, const sigset_t* sigmask, int *num_events){
 	int ret = syscall(SYS_SELECT, nfds, readfds, writefds, exceptfds, timeout, sigmask);
 	if(ret < 0){
@@ -545,21 +551,21 @@ int sys_pselect(int nfds, fd_set* readfds, fd_set* writefds,
 	return 0;
 }
 
-int sys_symlink(const char *target, const char *linkpath) {
+int Sysdeps<Symlink>::operator()(const char *target, const char *linkpath) {
 	long ret = syscall(SYS_SYMLINK, (uintptr_t)target, (uintptr_t)linkpath);
 	if (ret < 0)
 		return -ret;
 	return 0;
 }
 
-int sys_fchmod(int fd, mode_t mode) {
+int Sysdeps<Fchmod>::operator()(int fd, mode_t mode) {
 	long ret = syscall(SYS_FCHMOD, fd, mode);
 	if (ret < 0)
 		return -ret;
 	return 0;
 }
 
-int sys_chmod(const char *pathname, mode_t mode){
+int Sysdeps<Chmod>::operator()(const char *pathname, mode_t mode){
 	int ret = syscall(SYS_CHMOD, pathname, mode);
 
 	if(ret < 0){
@@ -569,7 +575,7 @@ int sys_chmod(const char *pathname, mode_t mode){
 	return 0;
 }
 
-int sys_pipe(int *fds, int flags){
+int Sysdeps<Pipe>::operator()(int *fds, int flags){
 	long ret = syscall(SYS_PIPE, fds, flags);
 	if(ret < 0){
 		return -ret;
@@ -577,7 +583,7 @@ int sys_pipe(int *fds, int flags){
 	return 0;
 }
 
-int sys_epoll_create(int flags, int *fd) {
+int Sysdeps<EpollCreate>::operator()(int flags, int *fd) {
 	int ret = syscall(SYS_EPOLL_CREATE, flags);
 
 	if(ret < 0){
@@ -589,7 +595,7 @@ int sys_epoll_create(int flags, int *fd) {
 	return 0;
 }
 
-int sys_epoll_ctl(int epfd, int mode, int fd, struct epoll_event *ev) {
+int Sysdeps<EpollCtl>::operator()(int epfd, int mode, int fd, struct epoll_event *ev) {
 	int ret = syscall(SYS_EPOLL_CTL, epfd, mode, fd, ev);
 
 	if(ret < 0) {
@@ -599,7 +605,7 @@ int sys_epoll_ctl(int epfd, int mode, int fd, struct epoll_event *ev) {
 	return 0;
 }
 
-int sys_epoll_pwait(int epfd, struct epoll_event *ev, int n,
+int Sysdeps<EpollPwait>::operator()(int epfd, struct epoll_event *ev, int n,
 		int timeout, const sigset_t *sigmask, int *raised) {
 	int ret = syscall(SYS_EPOLL_WAIT, epfd, ev, n, timeout, sigmask);
 
@@ -612,11 +618,11 @@ int sys_epoll_pwait(int epfd, struct epoll_event *ev, int n,
 	return 0;
 }
 
-int sys_ttyname(int tty, char *buf, size_t size) {
+int Sysdeps<Ttyname>::operator()(int tty, char *buf, size_t size) {
 	char path[PATH_MAX] = {"/dev/pts/"};
 
 	struct stat stat;
-	if(int e = sys_stat(fsfd_target::fd, tty, nullptr, 0, &stat)) {
+	if(int e = Sysdeps<Stat>::operator()(fsfd_target::fd, tty, nullptr, 0, &stat)) {
 		return e;
 	}
 
@@ -624,7 +630,7 @@ int sys_ttyname(int tty, char *buf, size_t size) {
 		return ENOTTY; // Not a char device, isn't a tty
 	}
 
-	if(sys_isatty(tty)) {
+	if(Sysdeps<Isatty>::operator()(tty)) {
 		return ENOTTY;
 	}
 
@@ -634,7 +640,7 @@ int sys_ttyname(int tty, char *buf, size_t size) {
 
 	struct dirent dirent;
 	size_t direntBytesRead;
-	while(!sys_read_entries(ptDir, &dirent, sizeof(dirent), &direntBytesRead) && direntBytesRead) {
+	while(!Sysdeps<ReadEntries>::operator()(ptDir, &dirent, sizeof(dirent), &direntBytesRead) && direntBytesRead) {
 		// Compare the inodes
 		if(dirent.d_ino == stat.st_ino) {
 			__ensure(strlen(path) + strlen(dirent.d_name) < PATH_MAX);
@@ -649,7 +655,7 @@ int sys_ttyname(int tty, char *buf, size_t size) {
 	return ENODEV;
 }
 
-int sys_fchdir(int fd) {
+int Sysdeps<Fchdir>::operator()(int fd) {
 	long ret = syscall(SYS_FCHDIR, fd);
 	if (ret < 0) {
 		return -ret;
@@ -657,7 +663,7 @@ int sys_fchdir(int fd) {
 	return 0;
 }
 
-int sys_fsync(int fd)
+int Sysdeps<Fsync>::operator()(int fd)
 {
     long ret = syscall(SYS_FSYNC, fd);
     if (ret < 0) {
@@ -666,7 +672,7 @@ int sys_fsync(int fd)
     return 0;
 }
 
-int sys_fdatasync(int fd)
+int Sysdeps<Fdatasync>::operator()(int fd)
 {
     long ret = syscall(SYS_FDATASYNC, fd);
     if (ret == -ENOSYS) {
@@ -680,12 +686,12 @@ int sys_fdatasync(int fd)
     return 0;
 }
 
-void sys_sync()
+void Sysdeps<Sync>::operator()()
 {
     syscall(SYS_SYNC);
 }
 
-int sys_fallocate(int fd, off_t offset, size_t size)
+int Sysdeps<Fallocate>::operator()(int fd, off_t offset, size_t size)
 {
     long ret = syscall(SYS_FALLOCATE, fd, offset, size);
     if (ret < 0) {
@@ -694,7 +700,7 @@ int sys_fallocate(int fd, off_t offset, size_t size)
     return 0;
 }
 
-int sys_flock(int fd, int options)
+int Sysdeps<Flock>::operator()(int fd, int options)
 {
     long ret = syscall(SYS_FLOCK, fd, options);
     if (ret < 0) {
@@ -703,7 +709,7 @@ int sys_flock(int fd, int options)
     return 0;
 }
 
-int sys_fadvise(int fd, off_t offset, off_t length, int advice)
+int Sysdeps<Fadvise>::operator()(int fd, off_t offset, off_t length, int advice)
 {
     long ret = syscall(SYS_FADVISE, fd, offset, length, advice);
     if (ret < 0) {
@@ -712,7 +718,7 @@ int sys_fadvise(int fd, off_t offset, off_t length, int advice)
     return 0;
 }
 
-int sys_ftruncate(int fd, size_t size)
+int Sysdeps<Ftruncate>::operator()(int fd, size_t size)
 {
     long ret = syscall(SYS_FTRUNCATE, fd, size);
     if (ret < 0) {
@@ -721,7 +727,7 @@ int sys_ftruncate(int fd, size_t size)
     return 0;
 }
 
-int sys_truncate(const char *path, off_t size)
+int Sysdeps<Truncate>::operator()(const char *path, off_t size)
 {
     long ret = syscall(SYS_TRUNCATE, path, size);
     if (ret < 0) {
@@ -730,7 +736,7 @@ int sys_truncate(const char *path, off_t size)
     return 0;
 }
 
-int sys_readv(int fd, const struct iovec *iovs, int iovc, ssize_t *bytes_read)
+int Sysdeps<Readv>::operator()(int fd, const struct iovec *iovs, int iovc, ssize_t *bytes_read)
 {
     long ret = syscall(SYS_READV, fd, iovs, iovc);
     if (ret < 0) {
@@ -740,7 +746,7 @@ int sys_readv(int fd, const struct iovec *iovs, int iovc, ssize_t *bytes_read)
     return 0;
 }
 
-int sys_writev(int fd, const struct iovec *iovs, int iovc, ssize_t *bytes_written)
+int Sysdeps<Writev>::operator()(int fd, const struct iovec *iovs, int iovc, ssize_t *bytes_written)
 {
     long ret = syscall(SYS_WRITEV, fd, iovs, iovc);
     if (ret < 0) {
@@ -750,7 +756,7 @@ int sys_writev(int fd, const struct iovec *iovs, int iovc, ssize_t *bytes_writte
     return 0;
 }
 
-int sys_faccessat(int dirfd, const char *pathname, int mode, int flags)
+int Sysdeps<Faccessat>::operator()(int dirfd, const char *pathname, int mode, int flags)
 {
     long ret = syscall(SYS_FACCESSAT, dirfd, pathname, mode, flags);
     if (ret < 0) {
@@ -759,7 +765,7 @@ int sys_faccessat(int dirfd, const char *pathname, int mode, int flags)
     return 0;
 }
 
-int sys_statvfs(const char *path, struct statvfs *out)
+int Sysdeps<Statvfs>::operator()(const char *path, struct statvfs *out)
 {
     long ret = syscall(SYS_STATVFS, path, out);
     if (ret < 0) {
@@ -768,7 +774,7 @@ int sys_statvfs(const char *path, struct statvfs *out)
     return 0;
 }
 
-int sys_fstatvfs(int fd, struct statvfs *out)
+int Sysdeps<Fstatvfs>::operator()(int fd, struct statvfs *out)
 {
     long ret = syscall(SYS_FSTATVFS, fd, out);
     if (ret < 0) {
@@ -795,20 +801,20 @@ static void statvfs_to_statfs(const struct statvfs *from, struct statfs *to)
     to->f_flags = from->f_flag;
 }
 
-int sys_statfs(const char *path, struct statfs *buf)
+int Sysdeps<Statfs>::operator()(const char *path, struct statfs *buf)
 {
     struct statvfs vfs;
-    int e = sys_statvfs(path, &vfs);
+    int e = Sysdeps<Statvfs>::operator()(path, &vfs);
     if (e)
         return e;
     statvfs_to_statfs(&vfs, buf);
     return 0;
 }
 
-int sys_fstatfs(int fd, struct statfs *buf)
+int Sysdeps<Fstatfs>::operator()(int fd, struct statfs *buf)
 {
     struct statvfs vfs;
-    int e = sys_fstatvfs(fd, &vfs);
+    int e = Sysdeps<Fstatvfs>::operator()(fd, &vfs);
     if (e)
         return e;
     statvfs_to_statfs(&vfs, buf);
@@ -816,7 +822,7 @@ int sys_fstatfs(int fd, struct statfs *buf)
 }
 #endif
 
-int sys_fchmodat(int dirfd, const char *pathname, mode_t mode, int flags)
+int Sysdeps<Fchmodat>::operator()(int dirfd, const char *pathname, mode_t mode, int flags)
 {
     long ret = syscall(SYS_FCHMODAT, dirfd, pathname, mode, flags);
     if (ret < 0) {
@@ -825,7 +831,7 @@ int sys_fchmodat(int dirfd, const char *pathname, mode_t mode, int flags)
     return 0;
 }
 
-int sys_fchownat(int dirfd, const char *pathname, uid_t owner, gid_t group, int flags)
+int Sysdeps<Fchownat>::operator()(int dirfd, const char *pathname, uid_t owner, gid_t group, int flags)
 {
     long ret = syscall(SYS_FCHOWNAT, dirfd, pathname, owner, group, flags);
     if (ret < 0) {
@@ -834,7 +840,7 @@ int sys_fchownat(int dirfd, const char *pathname, uid_t owner, gid_t group, int 
     return 0;
 }
 
-int sys_linkat(int olddirfd, const char *oldpath, int newdirfd, const char *newpath, int flags)
+int Sysdeps<Linkat>::operator()(int olddirfd, const char *oldpath, int newdirfd, const char *newpath, int flags)
 {
     long ret = syscall(SYS_LINKAT, olddirfd, oldpath, newdirfd, newpath, flags);
     if (ret < 0) {
@@ -843,7 +849,7 @@ int sys_linkat(int olddirfd, const char *oldpath, int newdirfd, const char *newp
     return 0;
 }
 
-int sys_symlinkat(const char *target, int newdirfd, const char *linkpath)
+int Sysdeps<Symlinkat>::operator()(const char *target, int newdirfd, const char *linkpath)
 {
     long ret = syscall(SYS_SYMLINKAT, target, newdirfd, linkpath);
     if (ret < 0) {
@@ -852,7 +858,7 @@ int sys_symlinkat(const char *target, int newdirfd, const char *linkpath)
     return 0;
 }
 
-int sys_utimensat(int dirfd, const char *pathname, const struct timespec times[2], int flags)
+int Sysdeps<Utimensat>::operator()(int dirfd, const char *pathname, const struct timespec times[2], int flags)
 {
     long ret = syscalln4(SYS_UTIMENSAT,
                          static_cast<uint64_t>(dirfd),

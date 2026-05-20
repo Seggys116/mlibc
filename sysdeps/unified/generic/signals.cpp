@@ -5,12 +5,11 @@
 #include <string.h>
 #include <errno.h>
 
-#include <mlibc/ansi-sysdeps.hpp>
-#include <mlibc/posix-sysdeps.hpp>
+#include <mlibc/all-sysdeps.hpp>
 
 namespace mlibc{
 
-int sys_sigprocmask(int how, const sigset_t *__restrict set,
+int Sysdeps<Sigprocmask>::operator()(int how, const sigset_t *__restrict set,
 	sigset_t *__restrict retrieve){
     int ret = syscall(SYS_SIGPROCMASK, how, set, retrieve);
     if(ret < 0){
@@ -20,7 +19,7 @@ int sys_sigprocmask(int how, const sigset_t *__restrict set,
     return 0;
 }
 
-int sys_sigaction(int signal, const struct sigaction *__restrict action,
+int Sysdeps<Sigaction>::operator()(int signal, const struct sigaction *__restrict action,
 	struct sigaction *__restrict oldAction) {
     int ret = syscall(SYS_SIGNAL_ACTION, signal, action, oldAction);
     if(ret < 0){
@@ -30,7 +29,7 @@ int sys_sigaction(int signal, const struct sigaction *__restrict action,
     return 0;
 }
 
-int sys_kill(int pid, int signal){
+int Sysdeps<Kill>::operator()(int pid, int signal){
     int ret = syscall(SYS_KILL, pid, signal);
     if(ret < 0){
         return -ret;
@@ -39,7 +38,7 @@ int sys_kill(int pid, int signal){
     return 0;
 }
 
-int sys_sigsuspend(const sigset_t *set) {
+int Sysdeps<Sigsuspend>::operator()(const sigset_t *set) {
     int ret = syscall(SYS_SIGSUSPEND, (uint64_t)set);
     if(ret < 0){
         return -ret;
@@ -47,34 +46,34 @@ int sys_sigsuspend(const sigset_t *set) {
     return 0;
 }
 
-int sys_pause() {
+int Sysdeps<Pause>::operator()() {
     // Pass nullptr to sigsuspend: the kernel will block with the current mask
     // unchanged and return -EINTR when any deliverable signal arrives.
-    return sys_sigsuspend(nullptr);
+    return Sysdeps<Sigsuspend>::operator()(nullptr);
 }
 
-int sys_sigaltstack(const stack_t *ss, stack_t *oss) {
+int Sysdeps<Sigaltstack>::operator()(const stack_t *ss, stack_t *oss) {
     int ret = syscall(SYS_SIGALTSTACK, ss, oss);
     if (ret < 0)
         return -ret;
     return 0;
 }
 
-int sys_sigpending(sigset_t *set) {
+int Sysdeps<Sigpending>::operator()(sigset_t *set) {
     long ret = syscall(SYS_SIGPENDING, (uintptr_t)set);
     if (ret < 0)
         return -ret;
     return 0;
 }
 
-int sys_tgkill(int tgid, int tid, int sig) {
+int Sysdeps<Tgkill>::operator()(int tgid, int tid, int sig) {
     long ret = syscall(SYS_TGKILL, tgid, tid, sig);
     if (ret < 0)
         return -ret;
     return 0;
 }
 
-int sys_sigtimedwait(const sigset_t *__restrict set, siginfo_t *__restrict info,
+int Sysdeps<Sigtimedwait>::operator()(const sigset_t *__restrict set, siginfo_t *__restrict info,
     const struct timespec *__restrict timeout, int *out_signal) {
     long ret = syscall(SYS_SIGTIMEDWAIT, (uintptr_t)set, (uintptr_t)info, (uintptr_t)timeout);
     if (ret < 0)
@@ -84,7 +83,7 @@ int sys_sigtimedwait(const sigset_t *__restrict set, siginfo_t *__restrict info,
     return 0;
 }
 
-int sys_sigqueue(pid_t pid, int sig, const union sigval val) {
+int Sysdeps<Sigqueue>::operator()(pid_t pid, int sig, const union sigval val) {
     siginfo_t si;
     memset(&si, 0, sizeof(si));
     si.si_signo = sig;

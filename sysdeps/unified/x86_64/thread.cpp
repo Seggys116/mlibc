@@ -1,7 +1,7 @@
 #include <bits/ensure.h>
 #include <errno.h>
 #include <mlibc/all-sysdeps.hpp>
-#include <mlibc/tcb.hpp>
+#include "../include/mlibc/tcb.hpp"
 #include <mlibc/thread-entry.hpp>
 #include <mlibc/debug.hpp>
 #include <stddef.h>
@@ -18,7 +18,7 @@ static inline size_t align_up(size_t value) {
 	return (value + (page_size - 1)) & ~(page_size - 1);
 }
 
-int sys_prepare_stack(
+int Sysdeps<PrepareStack>::operator()(
     void **stack,
     void *entry,
     void *user_arg,
