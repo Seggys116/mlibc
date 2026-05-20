@@ -2,12 +2,12 @@
 #define _GNU_SOURCE
 #endif
 
-#include <bits/ensure.h>
 #include <errno.h>
+#include <bits/ensure.h>
 #include <fcntl.h>
 
+#include <mlibc/all-sysdeps.hpp>
 #include <mlibc/debug.hpp>
-#include <mlibc/posix-sysdeps.hpp>
 
 int fallocate(int, int, off_t, off_t) {
 	mlibc::infoLogger() << "mlibc: fallocate() is a no-op" << frg::endlog;
@@ -15,16 +15,8 @@ int fallocate(int, int, off_t, off_t) {
 	return -1;
 }
 
-extern "C" __attribute__((visibility("default"))) int
-fallocate64(int fd, int mode, off_t offset, off_t len) {
-	return fallocate(fd, mode, offset, len);
-}
-
-int name_to_handle_at(
-    int dirfd, const char *pathname, struct file_handle *handle, int *mount_id, int flags
-) {
-	MLIBC_CHECK_OR_ENOSYS(mlibc::sys_name_to_handle_at, -1);
-	if (int e = mlibc::sys_name_to_handle_at(dirfd, pathname, handle, mount_id, flags); e) {
+int name_to_handle_at(int dirfd, const char *pathname, struct file_handle *handle, int *mount_id, int flags) {
+	if(int e = mlibc::sysdep_or_enosys<NameToHandleAt>(dirfd, pathname, handle, mount_id, flags); e) {
 		errno = e;
 		return -1;
 	}
@@ -36,11 +28,9 @@ int open_by_handle_at(int, struct file_handle *, int) {
 	__builtin_unreachable();
 }
 
-ssize_t
-splice(int in_fd, off_t *in_off, int out_fd, off_t *out_off, size_t size, unsigned int flags) {
-	MLIBC_CHECK_OR_ENOSYS(mlibc::sys_splice, -1);
+ssize_t splice(int in_fd, off_t *in_off, int out_fd, off_t *out_off, size_t size, unsigned int flags) {
 	ssize_t ret;
-	if (int e = mlibc::sys_splice(in_fd, in_off, out_fd, out_off, size, flags, &ret); e) {
+	if(int e = mlibc::sysdep_or_enosys<Splice>(in_fd, in_off, out_fd, out_off, size, flags, &ret); e) {
 		errno = e;
 		return -1;
 	}

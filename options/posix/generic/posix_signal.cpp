@@ -7,54 +7,35 @@
 #include <unistd.h>
 #include <bits/ensure.h>
 
-#include <mlibc/posix-sysdeps.hpp>
+#include <mlibc/all-sysdeps.hpp>
 #include <mlibc/tcb.hpp>
 
 int sigsuspend(const sigset_t *sigmask) {
-	MLIBC_CHECK_OR_ENOSYS(mlibc::sys_sigsuspend, -1);
-
 	// This is guaranteed to return an error (EINTR most probably)
-	errno = mlibc::sys_sigsuspend(sigmask);
+	errno = mlibc::sysdep_or_enosys<Sigsuspend>(sigmask);
 	return -1;
 }
 
 int pthread_sigmask(int how, const sigset_t *__restrict set, sigset_t *__restrict retrieve) {
- 	if(mlibc::sys_thread_sigmask) {
-	 	if(int e = mlibc::sys_thread_sigmask(how, set, retrieve); e) {
+ 	if constexpr (mlibc::IsImplemented<ThreadSigmask>) {
+	 	if(int e = mlibc::sysdep_or_enosys<ThreadSigmask>(how, set, retrieve); e) {
 	 	 	return e;
 	 	}
  	 	return 0;
  	}
 
-	if(!mlibc::sys_sigprocmask) {
-		MLIBC_MISSING_SYSDEP();
-		return ENOSYS;
-	}
-	if(int e = mlibc::sys_sigprocmask(how, set, retrieve); e) {
-		return e;
-	}
-	return 0;
+	return mlibc::sysdep_or_enosys<Sigprocmask>(how, set, retrieve);
 }
 
 int pthread_kill(pthread_t thread, int sig) {
 	auto tcb = reinterpret_cast<Tcb *>(thread);
 	auto pid = getpid();
 
-	if(!mlibc::sys_tgkill) {
-		MLIBC_MISSING_SYSDEP();
-		return ENOSYS;
-	}
-
-	if(int e = mlibc::sys_tgkill(pid, tcb->tid, sig); e) {
-		return e;
-	}
-
-	return 0;
+	return mlibc::sysdep_or_enosys<Tgkill>(pid, tcb->tid, sig);
 }
 
 int sigaction(int signum, const struct sigaction *__restrict act, struct sigaction *__restrict oldact) {
-	MLIBC_CHECK_OR_ENOSYS(mlibc::sys_sigaction, -1);
-	if(int e = mlibc::sys_sigaction(signum, act, oldact); e) {
+	if(int e = mlibc::sysdep_or_enosys<Sigaction>(signum, act, oldact); e) {
 		errno = e;
 		return -1;
 	}
@@ -76,8 +57,7 @@ int siginterrupt(int sig, int flag) {
 }
 
 int kill(pid_t pid, int number) {
-	MLIBC_CHECK_OR_ENOSYS(mlibc::sys_kill, -1);
-	if(int e = mlibc::sys_kill(pid, number); e) {
+	if(int e = mlibc::sysdep_or_enosys<Kill>(pid, number); e) {
 		errno = e;
 		return -1;
 	}
@@ -94,11 +74,8 @@ int killpg(pid_t pgrp, int sig) {
 }
 
 int sigtimedwait(const sigset_t *__restrict set, siginfo_t *__restrict info, const struct timespec *__restrict timeout) {
-	auto sysdep = MLIBC_CHECK_OR_ENOSYS(mlibc::sys_sigtimedwait, -1);
-
 	int signo;
-
-	if (int e = sysdep(set, info, timeout, &signo)) {
+	if (int e = mlibc::sysdep_or_enosys<Sigtimedwait>(set, info, timeout, &signo)) {
 		errno = e;
 		return -1;
 	}
@@ -123,9 +100,7 @@ int sigwait(const sigset_t *__restrict set, int *__restrict sig) {
 }
 
 int sigpending(sigset_t *set) {
-	auto sysdep = MLIBC_CHECK_OR_ENOSYS(mlibc::sys_sigpending, -1);
-
-	if(int e = sysdep(set)) {
+	if(int e = mlibc::sysdep_or_enosys<Sigpending>(set)) {
 		errno = e;
 		return -1;
 	}
@@ -139,8 +114,7 @@ int sigaltstack(const stack_t *__restrict ss, stack_t *__restrict oss) {
 		return -1;
 	}
 
-	MLIBC_CHECK_OR_ENOSYS(mlibc::sys_sigaltstack, -1);
-	if (int e = mlibc::sys_sigaltstack(ss, oss); e) {
+	if (int e = mlibc::sysdep_or_enosys<Sigaltstack>(ss, oss); e) {
 		errno = e;
 		return -1;
 	}
@@ -161,8 +135,7 @@ int sigisemptyset(const sigset_t *set) {
 #endif // __MLIBC_GLIBC_OPTION
 
 int sigqueue(pid_t pid, int sig, const union sigval val) {
-	MLIBC_CHECK_OR_ENOSYS(mlibc::sys_sigqueue, -1);
-	if (int e = mlibc::sys_sigqueue(pid, sig, val); e) {
+	if (int e = mlibc::sysdep_or_enosys<Sigqueue>(pid, sig, val); e) {
 		errno = e;
 		return -1;
 	}
@@ -172,6 +145,9 @@ int sigqueue(pid_t pid, int sig, const union sigval val) {
 
 int sig2str(int signum, char *str) {
 	const char *name = nullptr;
+
+	if (signum <= 0 || signum >= NSIG)
+		return -1;
 
 	if (signum > SIGRTMIN && signum < SIGRTMAX) {
 		snprintf(str, SIG2STR_MAX, "RTMIN+%d", signum - SIGRTMIN);
@@ -225,7 +201,8 @@ int sig2str(int signum, char *str) {
 #undef CASE_FOR
 
 		default:
-			return -1;
+			snprintf(str, SIG2STR_MAX, "SIG#%d", signum);
+			return 0;
 	}
 
 	strlcpy(str, name, SIG2STR_MAX);
@@ -297,6 +274,16 @@ int str2sig(const char *__restrict str, int *__restrict pnum) {
 			return -1;
 
 		*pnum = SIGRTMAX - offset;
+		return 0;
+	} else if(!strncmp(str, "SIG#", 4)) {
+		char *endptr = nullptr;
+		errno = 0;
+		auto val = strtol(str + 4, &endptr, 10);
+
+		if (errno || *endptr != '\0' || val <= 0 || val >= NSIG)
+			return -1;
+
+		*pnum = val;
 		return 0;
 	}
 

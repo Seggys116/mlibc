@@ -6,8 +6,8 @@
 #include <string.h>
 #include <bits/ensure.h>
 
+#include <mlibc/all-sysdeps.hpp>
 #include <mlibc/debug.hpp>
-#include <mlibc/posix-sysdeps.hpp>
 
 namespace {
 	FILE *global_file;
@@ -102,12 +102,14 @@ namespace {
 
 	void clear_entry(group *entry) {
 		free(entry->gr_name);
+		free(entry->gr_passwd);
 		if(entry->gr_mem) {
 			for(size_t i = 0; entry->gr_mem[i]; i++)
 				free(entry->gr_mem[i]);
 			free(entry->gr_mem);
 		}
 		entry->gr_name = nullptr;
+		entry->gr_passwd = nullptr;
 		entry->gr_mem = nullptr;
 	}
 
@@ -173,11 +175,14 @@ namespace {
 		free(grp->gr_mem);
 		grp->gr_mem = reinterpret_cast<char **>(buffer);
 
-		char *gr_name = stpcpy(string_data, grp->gr_name) + 1;
+		char *gr_passwd_ptr = stpcpy(string_data, grp->gr_name) + 1;
 		free(grp->gr_name);
 		grp->gr_name = string_data;
+		char *end_ptr = stpcpy(gr_passwd_ptr, grp->gr_passwd) + 1;
+		free(grp->gr_passwd);
+		grp->gr_passwd = gr_passwd_ptr;
 
-		__ensure(gr_name <= buffer + size);
+		__ensure(end_ptr <= buffer + size);
 		return 0;
 	}
 } // namespace
@@ -287,8 +292,7 @@ void setgrent(void) {
 }
 
 int setgroups(size_t size, const gid_t *list) {
-	MLIBC_CHECK_OR_ENOSYS(mlibc::sys_setgroups, -1);
-	if(int e = mlibc::sys_setgroups(size, list); e) {
+	if(int e = mlibc::sysdep_or_enosys<SetGroups>(size, list); e) {
 		errno = e;
 		return -1;
 	}

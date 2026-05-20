@@ -12,9 +12,9 @@ enum {
 #include <frg/scope_exit.hpp>
 #include <frg/small_vector.hpp>
 #include <frg/unique.hpp>
+#include <mlibc/all-sysdeps.hpp>
 #include <mlibc/allocator.hpp>
 #include <mlibc/debug.hpp>
-#include <mlibc/rtld-sysdeps.hpp>
 #include <mlibc/rtld-abi.hpp>
 #include <mlibc/rtld-config.hpp>
 #include <mlibc/thread.hpp>
@@ -98,7 +98,7 @@ unsigned long getauxval(unsigned long type) {
 #include <sys/hwprobe.h>
 
 int __riscv_hwprobe(struct riscv_hwprobe *pairs, size_t pair_count, size_t cpusetsize, cpu_set_t *cpus, unsigned int flags) {
-	return mlibc::sys_riscv_hwprobe(pairs, pair_count, cpusetsize, cpus, flags);
+	return mlibc::sysdep_or_enosys<RiscvHwprobe>(pairs, pair_count, cpusetsize, cpus, flags);
 }
 
 #endif
@@ -147,14 +147,14 @@ elf_addr handleIfunc(elf_addr addr) {
 
 bool trySeek(int fd, int64_t offset) {
 	off_t noff;
-	return mlibc::sys_seek(fd, offset, SEEK_SET, &noff) == 0;
+	return mlibc::sysdep<Seek>(fd, offset, SEEK_SET, &noff) == 0;
 }
 
 bool tryReadExactly(int fd, void *data, size_t length) {
 	size_t offset = 0;
 	while(offset < length) {
 		ssize_t chunk;
-		if(mlibc::sys_read(fd, reinterpret_cast<char *>(data) + offset,
+		if(mlibc::sysdep<Read>(fd, reinterpret_cast<char *>(data) + offset,
 				length - offset, &chunk))
 			return false;
 		if (chunk > 0)
@@ -167,7 +167,7 @@ bool tryReadExactly(int fd, void *data, size_t length) {
 }
 
 void closeOrDie(int fd) {
-	if(mlibc::sys_close(fd))
+	if(mlibc::sysdep<Close>(fd))
 		__ensure(!"sys_close() failed");
 }
 
@@ -256,7 +256,7 @@ frg::expected<LinkerError, SharedObject *> ObjectRepository::requestObjectWithNa
 
 	auto tryToOpen = [&] (const char *path) -> frg::optional<int> {
 		int fd;
-		if(auto x = mlibc::sys_open(path, O_RDONLY, 0, &fd); x) {
+		if(auto x = mlibc::sysdep<Open>(path, O_RDONLY, 0, &fd); x) {
 			return frg::null_opt;
 		}
 		return fd;
@@ -394,12 +394,11 @@ frg::expected<LinkerError, SharedObject *> ObjectRepository::requestObjectWithNa
 
 frg::expected<LinkerError, SharedObject *> ObjectRepository::requestObjectAtPath(frg::string_view path,
 		Scope *localScope, bool createScope, uint64_t rts) {
-	// TODO: Support SONAME correctly.
-	auto lastSlash = path.find_last('/') + 1;
+	auto lastSlash = path.find_last('/');
 	auto name = path;
-	if (!lastSlash) {
-		name = name.sub_string(lastSlash, path.size() - lastSlash);
-	}
+	if (lastSlash != static_cast<size_t>(-1))
+		name = name.sub_string(lastSlash + 1, path.size() - (lastSlash + 1));
+
 	if (auto obj = findLoadedObject(name))
 		return obj;
 
@@ -418,7 +417,7 @@ frg::expected<LinkerError, SharedObject *> ObjectRepository::requestObjectAtPath
 	frg::string<MemoryAllocator> no_prefix(getAllocator(), path);
 
 	int fd;
-	if(mlibc::sys_open((no_prefix + '\0').data(), O_RDONLY, 0, &fd)) {
+	if(mlibc::sysdep<Open>((no_prefix + '\0').data(), O_RDONLY, 0, &fd)) {
 		frg::destruct(getAllocator(), object);
 		return LinkerError::notFound;
 	}
@@ -507,7 +506,6 @@ void ObjectRepository::_fetchFromPhdrs(SharedObject *object, void *phdr_pointer,
 
 	frg::optional<ptrdiff_t> dynamic_offset;
 	frg::optional<ptrdiff_t> tls_offset;
-	frg::optional<ptrdiff_t> interp_offset;
 
 	// segments are already mapped, so we just have to find the dynamic section
 	for(size_t i = 0; i < phdr_count; i++) {
@@ -524,15 +522,18 @@ void ObjectRepository::_fetchFromPhdrs(SharedObject *object, void *phdr_pointer,
 		case PT_DYNAMIC:
 			dynamic_offset = phdr->p_vaddr;
 			break;
-		case PT_TLS:
+		case PT_TLS: {
 			object->tlsSegmentSize = phdr->p_memsz;
 			object->tlsAlignment = phdr->p_align;
 			object->tlsImageSize = phdr->p_filesz;
 			tls_offset = phdr->p_vaddr;
 			break;
 		case PT_INTERP:
-			interp_offset = phdr->p_vaddr;
-			break;
+			object->interpreterPath = frg::string<MemoryAllocator>{
+				(char*)(object->baseAddress + phdr->p_vaddr),
+					getAllocator()
+			};
+		} break;
 		default:
 			//FIXME warn about unknown phdrs
 			break;
@@ -543,11 +544,6 @@ void ObjectRepository::_fetchFromPhdrs(SharedObject *object, void *phdr_pointer,
 		object->dynamic = (elf_dyn *)(object->baseAddress + *dynamic_offset);
 	if(tls_offset)
 		object->tlsImagePtr = (void *)(object->baseAddress + *tls_offset);
-	if(interp_offset)
-		object->interpreterPath = frg::string<MemoryAllocator>{
-			reinterpret_cast<const char *>(object->baseAddress + *interp_offset),
-			getAllocator()
-		};
 }
 
 
@@ -610,7 +606,7 @@ frg::expected<LinkerError, void> ObjectRepository::_fetchFromFile(SharedObject *
 #if MLIBC_MMAP_ALLOCATE_DSO
 	void *mappedAddr = nullptr;
 
-	if (mlibc::sys_vm_map(nullptr,
+	if (mlibc::sysdep<VmMap>(nullptr,
 			highest_address - object->baseAddress, PROT_NONE,
 			MAP_PRIVATE | MAP_ANONYMOUS, -1, 0, &mappedAddr)) {
 		mlibc::infoLogger() << "sys_vm_map failed when allocating address space for DSO \""
@@ -660,45 +656,28 @@ frg::expected<LinkerError, void> ObjectRepository::_fetchFromFile(SharedObject *
 			if(phdr->p_flags & PF_X)
 				prot |= PROT_EXEC;
 
-				#if MLIBC_MAP_DSO_SEGMENTS
-					// we can avoid the vm_protect call if we don't have to write to the segment
-					if(phdr->p_memsz == phdr->p_filesz)
-						initial_prot = prot;
+		#if MLIBC_MAP_DSO_SEGMENTS
+			// we can avoid the vm_protect call if we don't have to write to the segment
+			if(phdr->p_memsz == phdr->p_filesz)
+				initial_prot = prot;
 
-					void *map_pointer;
-					auto map_error = mlibc::sys_vm_map(reinterpret_cast<void *>(map_address),
-							backed_map_size, initial_prot,
-							MAP_PRIVATE | MAP_FIXED, fd, phdr->p_offset - misalign, &map_pointer);
-					if(map_error) {
-						mlibc::infoLogger() << "rtld: PT_LOAD map failed for \"" << object->name << "\""
-								<< " errno=" << map_error
-								<< " va=" << (void *)map_address
-								<< " size=" << backed_map_size
-								<< " file_off=0x" << frg::hex_fmt{static_cast<uintptr_t>(phdr->p_offset - misalign)}
-								<< " prot=0x" << frg::hex_fmt{static_cast<uintptr_t>(initial_prot)}
-								<< frg::endlog;
-						__ensure(!"sys_vm_map failed");
-					}
-					if(total_map_size > backed_map_size) {
-						auto tail_map_error = mlibc::sys_vm_map(reinterpret_cast<void *>(map_address + backed_map_size),
-								total_map_size - backed_map_size, initial_prot,
-								MAP_PRIVATE | MAP_FIXED | MAP_ANONYMOUS, -1, 0, &map_pointer);
-						if(tail_map_error) {
-							mlibc::infoLogger() << "rtld: PT_LOAD BSS tail map failed for \"" << object->name << "\""
-									<< " errno=" << tail_map_error
-									<< " va=" << (void *)(map_address + backed_map_size)
-									<< " size=" << (total_map_size - backed_map_size)
-									<< " prot=0x" << frg::hex_fmt{static_cast<uintptr_t>(initial_prot)}
-									<< frg::endlog;
-							__ensure(!"sys_vm_map failed");
-						}
-					}
+			void *map_pointer;
+			if(mlibc::sysdep<VmMap>(reinterpret_cast<void *>(map_address),
+					backed_map_size, initial_prot,
+					MAP_PRIVATE | MAP_FIXED, fd, phdr->p_offset - misalign, &map_pointer))
+				__ensure(!"sys_vm_map failed");
+			if(total_map_size > backed_map_size)
+				if(mlibc::sysdep<VmMap>(reinterpret_cast<void *>(map_address + backed_map_size),
+						total_map_size - backed_map_size, initial_prot,
+						MAP_PRIVATE | MAP_FIXED | MAP_ANONYMOUS, -1, 0, &map_pointer))
+					__ensure(!"sys_vm_map failed");
 
-			if(mlibc::sys_vm_readahead)
-				if(mlibc::sys_vm_readahead(reinterpret_cast<void *>(map_address),
+			if constexpr (mlibc::IsImplemented<VmReadahead>) {
+				if(mlibc::sysdep_or_enosys<VmReadahead>(reinterpret_cast<void *>(map_address),
 						backed_map_size))
 					mlibc::infoLogger() << "mlibc: sys_vm_readahead() failed in ld.so"
 							<< frg::endlog;
+			}
 
 			// Clear the trailing area at the end of the backed mapping.
 			// We do not clear the leading area; programs are not supposed to access it.
@@ -708,7 +687,7 @@ frg::expected<LinkerError, void> ObjectRepository::_fetchFromFile(SharedObject *
 			(void)backed_map_size;
 
 			void *map_pointer;
-			if(mlibc::sys_vm_map(reinterpret_cast<void *>(map_address),
+			if(mlibc::sysdep<VmMap>(reinterpret_cast<void *>(map_address),
 					total_map_size, initial_prot,
 					MAP_PRIVATE | MAP_FIXED | MAP_ANONYMOUS, -1, 0, &map_pointer))
 				__ensure(!"sys_vm_map failed");
@@ -718,10 +697,10 @@ frg::expected<LinkerError, void> ObjectRepository::_fetchFromFile(SharedObject *
 					phdr->p_filesz));
 		#endif
 			if(initial_prot != prot) {
-				if (!mlibc::sys_vm_protect)
+				if constexpr (!mlibc::IsImplemented<VmProtect>)
 					__ensure(!"sys_vm_protect not provided");
 
-				if (mlibc::sys_vm_protect(reinterpret_cast<void *>(map_address), total_map_size, prot))
+				if (mlibc::sysdep_or_panic<VmProtect>(reinterpret_cast<void *>(map_address), total_map_size, prot))
 					__ensure(!"sys_vm_protect failed");
 			}
 		}else if(phdr->p_type == PT_TLS) {
@@ -816,8 +795,6 @@ void ObjectRepository::_parseDynamic(SharedObject *object) {
 			object->eagerBinding = true;
 			break;
 		case DT_FLAGS: {
-			// DF_ORIGIN is informational for objects that may use $ORIGIN in
-			// search paths and does not require dedicated runtime handling here.
 			if(dynamic->d_un.d_val & DF_SYMBOLIC)
 				object->symbolicResolution = true;
 			if(dynamic->d_un.d_val & DF_STATIC_TLS)
@@ -825,7 +802,7 @@ void ObjectRepository::_parseDynamic(SharedObject *object) {
 			if(dynamic->d_un.d_val & DF_BIND_NOW)
 				object->eagerBinding = true;
 
-			auto ignored = DF_BIND_NOW | DF_SYMBOLIC | DF_STATIC_TLS | DF_ORIGIN;
+			auto ignored = DF_BIND_NOW | DF_SYMBOLIC | DF_STATIC_TLS;
 #ifdef __riscv
 			// Work around https://sourceware.org/bugzilla/show_bug.cgi?id=24673.
 			ignored |= DF_TEXTREL;
@@ -844,10 +821,7 @@ void ObjectRepository::_parseDynamic(SharedObject *object) {
 			// The DF_1_PIE flag is informational only. It is used by e.g file(1).
 			// The DF_1_NODELETE flag has a similar effect to RTLD_NODELETE, both of which we
 			// ignore because we don't implement dlclose().
-			// Other bits listed below are accepted as informational hints.
-			if(dynamic->d_un.d_val & ~(DF_1_NOW | DF_1_PIE | DF_1_NODELETE
-					| DF_1_GLOBAL | DF_1_GROUP | DF_1_LOADFLTR | DF_1_INITFIRST
-					| DF_1_NOOPEN | DF_1_ORIGIN | DF_1_NODEFLIB))
+			if(dynamic->d_un.d_val & ~(DF_1_NOW | DF_1_PIE | DF_1_NODELETE))
 				mlibc::infoLogger() << "\e[31mrtld: DT_FLAGS_1(" << frg::hex_fmt{dynamic->d_un.d_val}
 						<< ") is not implemented correctly!\e[39m"
 						<< frg::endlog;
@@ -951,7 +925,6 @@ void ObjectRepository::_parseDynamic(SharedObject *object) {
 		object->soName = reinterpret_cast<const char *>(object->baseAddress
 				+ object->stringTableOffset + *soname_offset);
 	}
-
 }
 
 void ObjectRepository::_parseVerdef(SharedObject *object) {
@@ -1255,10 +1228,8 @@ frg::tuple<ObjectSymbol, SymbolVersion> SharedObject::getSymbolByIndex(size_t in
 void processLateRelocation(Relocation rel) {
 	// resolve the symbol if there is a symbol
 	frg::optional<ObjectSymbol> p;
-	const elf_sym *target_sym = nullptr;
 	if(rel.symbol_index()) {
 		auto [sym, ver] = rel.object()->getSymbolByIndex(rel.symbol_index());
-		target_sym = sym.symbol();
 
 		p = Scope::resolveGlobalOrLocal(*globalScope, rel.object()->localScope,
 				sym.getString(), rel.object()->objectRts, Scope::resolveCopy, ver);
@@ -1267,8 +1238,7 @@ void processLateRelocation(Relocation rel) {
 	switch(rel.type()) {
 	case R_COPY:
 		__ensure(p);
-		__ensure(target_sym);
-		memcpy(rel.destination(), (void *)p->virtualAddress(), target_sym->st_size);
+		memcpy(rel.destination(), (void *)p->virtualAddress(), p->symbol()->st_size);
 		break;
 
 	case R_IRELATIVE:
@@ -1346,8 +1316,7 @@ void doInitialize(SharedObject *object) {
 		mlibc::infoLogger() << "rtld: Running DT_INIT_ARRAY functions" << frg::endlog;
 	__ensure((object->initArraySize % sizeof(InitFuncPtr)) == 0);
 	for(size_t i = 0; i < object->initArraySize / sizeof(InitFuncPtr); i++)
-		if(object->initArray[i])
-			object->initArray[i]();
+		object->initArray[i]();
 
 	if(rtldConfig.debugVerbose)
 		mlibc::infoLogger() << "rtld: Object initialization complete" << frg::endlog;
@@ -1365,8 +1334,7 @@ void doDestruct(SharedObject *object) {
 		mlibc::infoLogger() << "rtld: Running DT_FINI_ARRAY functions" << frg::endlog;
 	__ensure((object->finiArraySize % sizeof(InitFuncPtr)) == 0);
 	for(size_t i = object->finiArraySize / sizeof(InitFuncPtr); i > 0; i--)
-		if(object->finiArray[i - 1])
-			object->finiArray[i - 1]();
+		object->finiArray[i - 1]();
 
 	if(rtldConfig.debugVerbose)
 		mlibc::infoLogger() << "rtld: Running DT_FINI function" << frg::endlog;
@@ -1414,13 +1382,13 @@ void initTlsObjects(Tcb *tcb, const frg::vector<SharedObject *, MemoryAllocator>
 }
 
 Tcb *allocateTcb() {
+	frg::unique_lock lock{*runtimeTlsMapLock};
 	size_t tlsInitialSize = runtimeTlsMap->initialLimit;
 
 	// To make sure that both the TCB and TLS data are sufficiently aligned, allocate
 	// slightly more than necessary and adjust alignment afterwards.
-	size_t tcbSize = sizeof(Tcb);
 	size_t alignOverhead = frg::max(alignof(Tcb), tlsMaxAlignment);
-	size_t allocSize = tlsInitialSize + tcbSize + alignOverhead;
+	size_t allocSize = tlsInitialSize + sizeof(Tcb) + alignOverhead;
 	auto allocation = reinterpret_cast<uintptr_t>(getAllocator().allocate(allocSize));
 	memset(reinterpret_cast<void *>(allocation), 0, allocSize);
 
@@ -1433,14 +1401,14 @@ Tcb *allocateTcb() {
 		// To do this, we will fix whichever address has stricter alignment requirements, and
 		// derive the other from it.
 		if (tlsMaxAlignment > alignof(Tcb)) {
-			tlsAddress = alignUp(allocation + tcbSize, tlsMaxAlignment);
-			tcbAddress = tlsAddress - tcbSize;
+			tlsAddress = alignUp(allocation + sizeof(Tcb), tlsMaxAlignment);
+			tcbAddress = tlsAddress - sizeof(Tcb);
 		} else {
 			tcbAddress = alignUp(allocation, alignof(Tcb));
-			tlsAddress = tcbAddress + tcbSize;
+			tlsAddress = tcbAddress + sizeof(Tcb);
 		}
 		__ensure((tlsAddress & (tlsMaxAlignment - 1)) == 0);
-		__ensure(tlsAddress == tcbAddress + tcbSize);
+		__ensure(tlsAddress == tcbAddress + sizeof(Tcb));
 	} else {
 		// The TCB should be aligned such that the preceding blocks are aligned too.
 		tcbAddress = alignUp(allocation + tlsInitialSize, alignOverhead);
@@ -1450,14 +1418,12 @@ Tcb *allocateTcb() {
 
 	if (rtldConfig.debugVerbose) {
 		mlibc::infoLogger() << "rtld: tcb allocated at " << (void *)tcbAddress
-				<< ", size = 0x" << frg::hex_fmt{tcbSize} << frg::endlog;
+				<< ", size = 0x" << frg::hex_fmt{sizeof(Tcb)} << frg::endlog;
 		mlibc::infoLogger() << "rtld: tls allocated at " << (void *)tlsAddress
 				<< ", size = 0x" << frg::hex_fmt{tlsInitialSize} << frg::endlog;
 	}
 
-	// Value-initialize the TCB so scalar fields (tid, pointers, counters, etc.)
-	// start from deterministic zero state for new threads.
-	Tcb *tcb_ptr = new ((char *)tcbAddress) Tcb{};
+	Tcb *tcb_ptr = new ((char *)tcbAddress) Tcb;
 	tcb_ptr->selfPointer = tcb_ptr;
 
 	tcb_ptr->stackCanary = __stack_chk_guard;
@@ -1487,15 +1453,18 @@ Tcb *allocateTcb() {
 void *accessDtv(SharedObject *object) {
 	Tcb *tcb_ptr = mlibc::get_current_tcb();
 
-	// We might need to reallocate the DTV.
-	if(object->tlsIndex >= tcb_ptr->dtvSize) {
-		// TODO: need to protect runtimeTlsMap against concurrent access.
-		auto ndtv = frg::construct_n<void *>(getAllocator(), runtimeTlsMap->indices.size());
-		memset(ndtv, 0, sizeof(void *) * runtimeTlsMap->indices.size());
-		memcpy(ndtv, tcb_ptr->dtvPointers, sizeof(void *) * tcb_ptr->dtvSize);
-		frg::destruct_n(getAllocator(), tcb_ptr->dtvPointers, tcb_ptr->dtvSize);
-		tcb_ptr->dtvSize = runtimeTlsMap->indices.size();
-		tcb_ptr->dtvPointers = ndtv;
+	{
+		frg::unique_lock lock{*runtimeTlsMapLock};
+
+		// We might need to reallocate the DTV.
+		if(object->tlsIndex >= tcb_ptr->dtvSize) {
+			auto ndtv = frg::construct_n<void *>(getAllocator(), runtimeTlsMap->indices.size());
+			memset(ndtv, 0, sizeof(void *) * runtimeTlsMap->indices.size());
+			memcpy(ndtv, tcb_ptr->dtvPointers, sizeof(void *) * tcb_ptr->dtvSize);
+			frg::destruct_n(getAllocator(), tcb_ptr->dtvPointers, tcb_ptr->dtvSize);
+			tcb_ptr->dtvSize = runtimeTlsMap->indices.size();
+			tcb_ptr->dtvPointers = ndtv;
+		}
 	}
 
 	// We might need to fill in a new DTV entry.
@@ -1650,13 +1619,6 @@ frg::optional<ObjectSymbol> resolveInObject(SharedObject *object, frg::string_vi
 
 		return frg::optional<ObjectSymbol>{};
 	}else{
-		if(object->hashStyle != HashStyle::gnu) {
-			mlibc::panicLogger() << "rtld: unexpected hash style "
-					<< static_cast<int>(object->hashStyle)
-					<< " while resolving '" << string << "' in object '"
-					<< object->name << "' (path='" << object->path << "')"
-					<< frg::endlog;
-		}
 		__ensure(object->hashStyle == HashStyle::gnu);
 
 		auto hash_table = reinterpret_cast<const GnuHashTableHeader *>(object->baseAddress
@@ -1763,6 +1725,7 @@ frg::optional<ObjectSymbol> Scope::resolveSymbol(frg::string_view string,
 		if((flags & skipGlobalAfterRts) && object->globalRts > skipRts) {
 			// globalRts should be monotone increasing for objects in the global scope,
 			// so as an optimization we can break early here.
+			// TODO: If we implement DT_SYMBOLIC, this assumption fails.
 			if(isGlobal)
 				break;
 			else
@@ -1882,6 +1845,8 @@ void Loader::linkObjects(SharedObject *root) {
 }
 
 void Loader::_buildTlsMaps() {
+	frg::unique_lock lock{*runtimeTlsMapLock};
+
 	if(_isInitialLink) {
 		__ensure(runtimeTlsMap->initialPtr == 0);
 		__ensure(runtimeTlsMap->initialLimit == 0);
@@ -1987,8 +1952,7 @@ void Loader::initObjects(ObjectRepository *repository) {
 		__ensure(!_mainExecutable->wasInitialized);
 		__ensure((_mainExecutable->preInitArraySize % sizeof(InitFuncPtr)) == 0);
 		for(size_t i = 0; i < _mainExecutable->preInitArraySize / sizeof(InitFuncPtr); i++)
-			if(_mainExecutable->preInitArray[i])
-				_mainExecutable->preInitArray[i]();
+			_mainExecutable->preInitArray[i]();
 	}
 
 	// Convert the breadth-first representation to a depth-first post-order representation,
@@ -2034,12 +1998,13 @@ void Loader::_processRelocations(Relocation &rel) {
 	if(rel.symbol_index()) {
 		auto [sym, ver] = rel.object()->getSymbolByIndex(rel.symbol_index());
 
-		if(rel.object()->symbolicResolution)
+		if (rel.object()->symbolicResolution)
 			p = resolveInObject(rel.object(), sym.getString(), ver);
-		if(!p) {
+
+		if (!p)
 			p = Scope::resolveGlobalOrLocal(*globalScope, rel.object()->localScope,
 					sym.getString(), rel.object()->objectRts, 0, ver);
-		}
+
 		if(!p) {
 			if(ELF_ST_BIND(sym.symbol()->st_info) != STB_WEAK)
 				mlibc::panicLogger() << "Unresolved load-time symbol "
@@ -2276,12 +2241,7 @@ void Loader::_processLazyRelocations(SharedObject *object) {
 		case R_JUMP_SLOT:
 			if(eagerBinding) {
 				auto [sym, ver] = object->getSymbolByIndex(symbol_index);
-				auto p = object->symbolicResolution ? resolveInObject(object, sym.getString(), ver)
-					: frg::optional<ObjectSymbol>{};
-				if(!p) {
-					p = Scope::resolveGlobalOrLocal(*globalScope, object->localScope,
-							sym.getString(), object->objectRts, 0, ver);
-				}
+				auto p = Scope::resolveGlobalOrLocal(*globalScope, object->localScope, sym.getString(), object->objectRts, 0, ver);
 
 				if(!p) {
 					if(ELF_ST_BIND(sym.symbol()->st_info) != STB_WEAK)
@@ -2315,12 +2275,7 @@ void Loader::_processLazyRelocations(SharedObject *object) {
 
 			if (symbol_index) {
 				auto [sym, ver] = object->getSymbolByIndex(symbol_index);
-				auto p = object->symbolicResolution ? resolveInObject(object, sym.getString(), ver)
-					: frg::optional<ObjectSymbol>{};
-				if(!p) {
-					p = Scope::resolveGlobalOrLocal(*globalScope, object->localScope,
-							sym.getString(), object->objectRts, 0, ver);
-				}
+				auto p = Scope::resolveGlobalOrLocal(*globalScope, object->localScope, sym.getString(), object->objectRts, 0, ver);
 
 				if (!p) {
 					__ensure(ELF_ST_BIND(sym.symbol()->st_info) != STB_WEAK);
@@ -2368,3 +2323,4 @@ void Loader::_processLazyRelocations(SharedObject *object) {
 		}
 	}
 }
+

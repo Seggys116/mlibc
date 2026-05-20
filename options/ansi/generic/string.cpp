@@ -5,7 +5,11 @@
 #include <wchar.h>
 
 #include <bits/ensure.h>
+#include <mlibc/collation.hpp>
+#include <mlibc/strings.hpp>
+#include <mlibc/strtofp.hpp>
 #include <mlibc/strtol.hpp>
+#include <mlibc/wide.hpp>
 
 // memset() is defined in options/internals.
 // memcpy() is defined in options/internals.
@@ -80,8 +84,8 @@ int strcmp(const char *a, const char *b) {
 }
 
 int strcoll(const char *a, const char *b) {
-	// TODO: strcoll should take "LC_COLLATE" into account.
-	return strcmp(a, b);
+	const auto l = mlibc::getActiveLocale();
+	return mlibc::strcoll<char>(a, b, l);
 }
 
 int strncmp(const char *a, const char *b, size_t max_size) {
@@ -103,14 +107,23 @@ int strncmp(const char *a, const char *b, size_t max_size) {
 }
 
 size_t strxfrm(char *__restrict dest, const char *__restrict src, size_t n) {
-	// NOTE: This might not work for non ANSI charsets.
-	size_t l = strlen(src);
+	auto l = mlibc::getActiveLocale();
 
-	// man page: If the value returned is n or more, the contents of dest are indeterminate.
-	if(n > l)
-		strncpy(dest, src, n);
+	auto nrules = l->collate.get(_NL_COLLATE_NRULES).asUint32();
+	if (nrules == 0) {
+		size_t len = strlen(src);
+		if (n)
+			mlibc::stpncpy(dest, src, frg::min(len + 1, n));
+		return len;
+	}
 
-	return l;
+	if (*src == '\0') {
+		if (n)
+			*dest = '\0';
+		return 0;
+	}
+
+	return mlibc::do_xfrm<char>(reinterpret_cast<const uint8_t *>(src), dest, n, mlibc::coll_context<char>::from_localeinfo(l));
 }
 
 void *memchr(const void *s, int c, size_t size) {
@@ -122,12 +135,14 @@ void *memchr(const void *s, int c, size_t size) {
 }
 char *strchr(const char *s, int c) {
 	size_t i = 0;
+	char cc = static_cast<char>(c);
+
 	while(s[i]) {
-		if(s[i] == c)
+		if(s[i] == cc)
 			return const_cast<char *>(&s[i]);
 		i++;
 	}
-	if(c == 0)
+	if(cc == 0)
 		return const_cast<char *>(&s[i]);
 	return nullptr;
 }
@@ -149,10 +164,12 @@ char *strpbrk(const char *s, const char *chrs) {
 	return nullptr;
 }
 char *strrchr(const char *s, int c) {
+	char cc = static_cast<char>(c);
+
 	// The null-terminator is considered to be part of the string.
 	size_t length = strlen(s);
 	for(size_t i = 0; i <= length; i++) {
-		if(s[length - i] == c)
+		if(s[length - i] == cc)
 			return const_cast<char *>(s + (length - i));
 	}
 	return nullptr;
@@ -232,9 +249,17 @@ char *strchrnul(const char *s, int c) {
 	return const_cast<char *>(s + i);
 }
 
-double wcstod(const wchar_t *__restrict, wchar_t **__restrict) { MLIBC_STUB_BODY; }
-float wcstof(const wchar_t *__restrict, wchar_t **__restrict) { MLIBC_STUB_BODY; }
-long double wcstold(const wchar_t *__restrict, wchar_t **__restrict) { MLIBC_STUB_BODY; }
+double wcstod(const wchar_t *__restrict string, wchar_t **__restrict end) {
+	return mlibc::strtofp<double, wchar_t>(string, end, mlibc::getActiveLocale());
+}
+
+float wcstof(const wchar_t *__restrict string, wchar_t **__restrict end) {
+	return mlibc::strtofp<float, wchar_t>(string, end, mlibc::getActiveLocale());
+}
+
+long double wcstold(const wchar_t *__restrict string, wchar_t **__restrict end) {
+	return mlibc::strtofp<long double, wchar_t>(string, end, mlibc::getActiveLocale());
+}
 
 long wcstol(const wchar_t *__restrict nptr, wchar_t **__restrict endptr, int base)  {
 	return mlibc::stringToInteger<long, wchar_t>(nptr, endptr, base);
@@ -296,14 +321,35 @@ int wcscmp(const wchar_t *l, const wchar_t *r) {
 	return *l - *r;
 }
 
-int wcscoll(const wchar_t *, const wchar_t *) { MLIBC_STUB_BODY; }
+int wcscoll(const wchar_t *a, const wchar_t *b) {
+	const auto l = mlibc::getActiveLocale();
+	return mlibc::strcoll<wchar_t>(a, b, l);
+}
 
 int wcsncmp(const wchar_t *l, const wchar_t *r, size_t n) {
 	for(; n && *l == *r && *l && *r; n--, l++, r++);
 	return n ? (*l < *r ? -1 : *l > *r) : 0;
 }
 
-size_t wcsxfrm(wchar_t *__restrict, const wchar_t *__restrict, size_t) { MLIBC_STUB_BODY; }
+size_t wcsxfrm(wchar_t *__restrict dest, const wchar_t *__restrict src, size_t size) {
+	const auto l = mlibc::getActiveLocale();
+
+	auto nrules = l->collate.get(_NL_COLLATE_NRULES).asUint32();
+	if (nrules == 0) {
+		size_t len = wcslen(src);
+		if (size)
+			mlibc::wcpncpy(dest, src, frg::min(len + 1, size));
+		return len;
+	}
+
+	if (*src == L'\0') {
+		if (size)
+			*dest = L'\0';
+		return 0;
+	}
+
+	return mlibc::do_xfrm<wchar_t>(reinterpret_cast<const wint_t *>(src), dest, size, mlibc::coll_context<wchar_t>::from_localeinfo(l));
+}
 
 int wmemcmp(const wchar_t *a, const wchar_t *b, size_t size) {
 	for(size_t i = 0; i < size; i++) {
@@ -424,6 +470,7 @@ wchar_t *wmemset(wchar_t *d, wchar_t c, size_t n) {
 char *strerror(int e) {
 	const char *s;
 	switch(e) {
+	case 0: s = "Success"; break;
 	case EAGAIN: s = "Operation would block (EAGAIN)"; break;
 	case EACCES: s = "Access denied (EACCESS)"; break;
 	case EBADF:  s = "Bad file descriptor (EBADF)"; break;
@@ -549,7 +596,7 @@ char *strerror(int e) {
 
 extern "C" char *__gnu_strerror_r(int e, char *buffer, size_t bufsz) {
 	auto s = strerror(e);
-	strncpy(buffer, s, bufsz);
+	mlibc::strlcpy(buffer, s, bufsz);
 	return buffer;
 }
 
@@ -557,9 +604,10 @@ extern "C" char *__gnu_strerror_r(int e, char *buffer, size_t bufsz) {
 
 int strerror_r(int e, char *buffer, size_t bufsz) {
 	auto s = strerror(e);
-	strncpy(buffer, s, bufsz);
+	// POSIX: implementations are encouraged to null terminate strerrbuf when failing with
+	// [ERANGE] for any size other than bufsz of zero
 	// Note that strerror_r does not set errno on error!
-	if(strlen(s) >= bufsz)
+	if(mlibc::strlcpy(buffer, s, bufsz) >= bufsz)
 		return ERANGE;
 	return 0;
 }

@@ -1,13 +1,7 @@
-#include <errno.h>
+#include <bits/ensure.h>
 #include <malloc.h>
-#include <stdlib.h>
 
-void *memalign(size_t alignment, size_t size) {
-	void *ptr = nullptr;
-	int ret = posix_memalign(&ptr, alignment, size);
-	if(ret) {
-		errno = ret;
-		return nullptr;
-	}
-	return ptr;
+void *memalign(size_t, size_t) {
+	__ensure(!"Not implemented");
+	__builtin_unreachable();
 }

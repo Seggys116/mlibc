@@ -21,16 +21,3 @@ struct ether_addr *ether_aton(const char *) {
 	__ensure(!"Not implemented");
 	__builtin_unreachable();
 }
-
-struct ether_addr *ether_aton_r(const char *asc, struct ether_addr *addr) {
-	unsigned int values[ETH_ALEN];
-	if (sscanf(asc, "%x:%x:%x:%x:%x:%x",
-	           &values[0], &values[1], &values[2],
-	           &values[3], &values[4], &values[5]) != ETH_ALEN) {
-		return nullptr;
-	}
-	for (int i = 0; i < ETH_ALEN; i++) {
-		addr->ether_addr_octet[i] = values[i];
-	}
-	return addr;
-}

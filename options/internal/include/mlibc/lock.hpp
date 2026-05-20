@@ -3,7 +3,7 @@
 
 #include <errno.h>
 #include <stdint.h>
-#include <mlibc/internal-sysdeps.hpp>
+#include <mlibc/all-sysdeps.hpp>
 #include <mlibc/debug.hpp>
 #include <mlibc/tid.hpp>
 #include <bits/ensure.h>
@@ -26,18 +26,12 @@ struct alignas(4) FutexLockImpl {
 	void lock() {
 		unsigned int this_tid = mlibc::this_tid();
 		unsigned int expected = 0;
-		bool preserveWaiters = false;
 
 		while(true) {
-			unsigned int owner = expected & ownerMask;
-			if(!owner) {
-				// Try to take the mutex here. This must also handle the
-				// waitersBit-only handoff state left by unlock().
-				unsigned int desired = this_tid | (expected & waitersBit);
-				if(preserveWaiters)
-					desired |= waitersBit;
+			if(!expected) {
+				// Try to take the mutex here.
 				if(__atomic_compare_exchange_n(&_state,
-						&expected, desired, false, __ATOMIC_ACQUIRE, __ATOMIC_ACQUIRE)) {
+						&expected, this_tid, false, __ATOMIC_ACQUIRE, __ATOMIC_ACQUIRE)) {
 					if constexpr (Recursive) {
 						__ensure(!_recursion);
 						_recursion = 1;
@@ -46,7 +40,7 @@ struct alignas(4) FutexLockImpl {
 				}
 			}else{
 				// If this (recursive) mutex is already owned by us, increment the recursion level.
-				if(owner == this_tid) {
+				if((expected & ownerMask) == this_tid) {
 					if constexpr (Recursive)
 						++_recursion;
 					else
@@ -56,8 +50,7 @@ struct alignas(4) FutexLockImpl {
 
 				// Wait on the futex if the waiters flag is set.
 				if(expected & waitersBit) {
-					preserveWaiters = true;
-					int e = mlibc::sys_futex_wait((int *)&_state, expected, nullptr);
+					int e = mlibc::sysdep<FutexWait>((int *)&_state, expected, nullptr);
 
 					// If the wait returns EAGAIN, that means that the waitersBit was just unset by
 					// some other thread. In this case, we should loop back around.
@@ -71,10 +64,8 @@ struct alignas(4) FutexLockImpl {
 					// Otherwise we have to set the waiters flag first.
 					unsigned int desired = expected | waitersBit;
 					if(__atomic_compare_exchange_n((int *)&_state,
-							reinterpret_cast<int*>(&expected), desired, false, __ATOMIC_RELAXED, __ATOMIC_RELAXED)) {
-						preserveWaiters = true;
+							reinterpret_cast<int*>(&expected), desired, false, __ATOMIC_RELAXED, __ATOMIC_RELAXED))
 						expected = desired;
-					}
 				}
 			}
 		}
@@ -83,13 +74,11 @@ struct alignas(4) FutexLockImpl {
 	bool try_lock() {
 		unsigned int this_tid = mlibc::this_tid();
 		unsigned int expected = __atomic_load_n(&_state, __ATOMIC_RELAXED);
-		unsigned int owner = expected & ownerMask;
 
-		if(!owner) {
-			// Try to take the mutex here, preserving any published waiter bit.
-			unsigned int desired = this_tid | (expected & waitersBit);
+		if(!expected) {
+			// Try to take the mutex here.
 			if(__atomic_compare_exchange_n(&_state,
-							&expected, desired, false, __ATOMIC_ACQUIRE, __ATOMIC_ACQUIRE)) {
+							&expected, this_tid, false, __ATOMIC_ACQUIRE, __ATOMIC_ACQUIRE)) {
 				if constexpr (Recursive)
 					_recursion = 1;
 				return true;
@@ -98,7 +87,7 @@ struct alignas(4) FutexLockImpl {
 			// If this (recursive) mutex is already owned by us, increment the recursion level.
 			if((expected & ownerMask) == this_tid) {
 				if constexpr (Recursive) {
-					__ensure(_recursion);
+					__ensure(!_recursion);
 					++_recursion;
 					return true;
 				} else {
@@ -118,24 +107,15 @@ struct alignas(4) FutexLockImpl {
 				return;
 		}
 
-		// Preserve waitersBit across the unlock handoff so successive sleepers
-		// continue receiving wakeups instead of being stranded behind a waiter-
-		// bit-only state transition.
-		auto unlockedState = (__atomic_load_n(&_state, __ATOMIC_ACQUIRE) & waitersBit)
-				? waitersBit : 0;
-		auto state = __atomic_exchange_n(&_state, unlockedState, __ATOMIC_RELEASE);
+		// Reset the mutex to the unlocked state.
+		auto state = __atomic_exchange_n(&_state, 0, __ATOMIC_RELEASE);
 		__ensure((state & ownerMask) == mlibc::this_tid());
 
 		if(state & waitersBit) {
 			// Wake the futex if there were waiters. Since the mutex might not exist at this location
 			// anymore, we must conservatively ignore EACCES and EINVAL which may occur as a result.
-			int e = mlibc::sys_futex_wake((int *)&_state);
+			int e = mlibc::sysdep<FutexWake>((int *)&_state, true);
 			__ensure(e >= 0 || e == EACCES || e == EINVAL);
-			if(!e) {
-				unsigned int expected = waitersBit;
-				__atomic_compare_exchange_n(&_state,
-						&expected, 0u, false, __ATOMIC_RELEASE, __ATOMIC_RELAXED);
-			}
 		}
 	}
 private:

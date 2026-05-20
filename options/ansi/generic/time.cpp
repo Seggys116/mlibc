@@ -17,7 +17,7 @@
 #include <bits/ensure.h>
 #include <mlibc/debug.hpp>
 #include <mlibc/file-window.hpp>
-#include <mlibc/ansi-sysdeps.hpp>
+#include <mlibc/all-sysdeps.hpp>
 #include <mlibc/allocator.hpp>
 #include <mlibc/lock.hpp>
 #include <mlibc/locale.hpp>
@@ -106,72 +106,22 @@ struct tm *localtime(const time_t *unix_gmt) {
 	return localtime_r(unix_gmt, &per_thread_tm);
 }
 
-size_t strftime(char *__restrict dest, size_t max_size,
-		const char *__restrict format, const struct tm *__restrict tm) {
+size_t strftime(
+    char *__restrict dest,
+    size_t max_size,
+    const char *__restrict format,
+    const struct tm *__restrict tm
+) {
 	return mlibc::strftime(dest, max_size, format, tm, mlibc::getActiveLocale());
 }
 
-size_t wcsftime(wchar_t *__restrict dest, size_t max_size,
-		const wchar_t *__restrict format, const struct tm *__restrict tm) {
-	if(!dest || !format || !tm || !max_size)
-		return 0;
-
-	size_t format_len = wcslen(format);
-	char *format_mb = reinterpret_cast<char *>(malloc(format_len + 1));
-	if(!format_mb)
-		return 0;
-
-	for(size_t i = 0; i < format_len; i++) {
-		wchar_t wc = format[i];
-		// Conservative implementation: accept ASCII format strings only.
-		if(wc < 0 || wc > 0x7F) {
-			dest[0] = L'\0';
-			free(format_mb);
-			errno = EILSEQ;
-			return 0;
-		}
-		format_mb[i] = static_cast<char>(wc);
-	}
-	format_mb[format_len] = '\0';
-
-	if(max_size > (static_cast<size_t>(-1) / MB_LEN_MAX)) {
-		dest[0] = L'\0';
-		free(format_mb);
-		return 0;
-	}
-
-	size_t tmp_capacity = max_size * MB_LEN_MAX;
-	if(tmp_capacity == 0)
-		tmp_capacity = 1;
-	char *tmp = reinterpret_cast<char *>(malloc(tmp_capacity));
-	if(!tmp) {
-		dest[0] = L'\0';
-		free(format_mb);
-		return 0;
-	}
-
-	size_t bytes = mlibc::strftime(tmp, tmp_capacity, format_mb, tm, mlibc::getActiveLocale());
-	free(format_mb);
-	if(!bytes) {
-		dest[0] = L'\0';
-		free(tmp);
-		return 0;
-	}
-
-	// Conservative widening: byte-wise promotion to wchar_t.
-	// If the locale emits multibyte sequences, this is lossy but still avoids
-	// the previous hard stub behavior.
-	if(bytes >= max_size) {
-		dest[0] = L'\0';
-		free(tmp);
-		return 0;
-	}
-
-	for(size_t i = 0; i < bytes; i++)
-		dest[i] = static_cast<unsigned char>(tmp[i]);
-	dest[bytes] = L'\0';
-	free(tmp);
-	return bytes;
+size_t wcsftime(
+    wchar_t *__restrict dest,
+    size_t max_size,
+    const wchar_t *__restrict format,
+    const struct tm *__restrict tm
+) {
+	return mlibc::strftime(dest, max_size, format, tm, mlibc::getActiveLocale());
 }
 
 namespace {
@@ -516,12 +466,12 @@ bool parse_tzfile(const char *tz) {
 	frg::string<MemoryAllocator> path = parse_tzfile_path(tz);
 
 	// Check if file exists, otherwise fallback to the default.
-	if (!mlibc::sys_stat) {
+	if constexpr (!mlibc::IsImplemented<Stat>) {
 		MLIBC_MISSING_SYSDEP();
 		__ensure(!"cannot proceed without sys_stat");
 	}
 	struct stat info;
-	if (mlibc::sys_stat(mlibc::fsfd_target::path, -1, path.data(), 0, &info))
+	if (mlibc::sysdep_or_panic<Stat>(mlibc::fsfd_target::path, -1, path.data(), 0, &info))
 		return true;
 
 	// FIXME: Make this fallible so the above check is not needed.
@@ -530,12 +480,12 @@ bool parse_tzfile(const char *tz) {
 	// TODO(geert): we can probably cache this somehow
 	tzfile tzfile_time;
 	memcpy(&tzfile_time, reinterpret_cast<char *>(window.get()), sizeof(tzfile));
-	tzfile_time.tzh_ttisgmtcnt = mlibc::bit_util<uint32_t>::byteswap(tzfile_time.tzh_ttisgmtcnt);
-	tzfile_time.tzh_ttisstdcnt = mlibc::bit_util<uint32_t>::byteswap(tzfile_time.tzh_ttisstdcnt);
-	tzfile_time.tzh_leapcnt = mlibc::bit_util<uint32_t>::byteswap(tzfile_time.tzh_leapcnt);
-	tzfile_time.tzh_timecnt = mlibc::bit_util<uint32_t>::byteswap(tzfile_time.tzh_timecnt);
-	tzfile_time.tzh_typecnt = mlibc::bit_util<uint32_t>::byteswap(tzfile_time.tzh_typecnt);
-	tzfile_time.tzh_charcnt = mlibc::bit_util<uint32_t>::byteswap(tzfile_time.tzh_charcnt);
+	tzfile_time.tzh_ttisgmtcnt = mlibc::bit_util<uint32_t>::be_to_host(tzfile_time.tzh_ttisgmtcnt);
+	tzfile_time.tzh_ttisstdcnt = mlibc::bit_util<uint32_t>::be_to_host(tzfile_time.tzh_ttisstdcnt);
+	tzfile_time.tzh_leapcnt = mlibc::bit_util<uint32_t>::be_to_host(tzfile_time.tzh_leapcnt);
+	tzfile_time.tzh_timecnt = mlibc::bit_util<uint32_t>::be_to_host(tzfile_time.tzh_timecnt);
+	tzfile_time.tzh_typecnt = mlibc::bit_util<uint32_t>::be_to_host(tzfile_time.tzh_typecnt);
+	tzfile_time.tzh_charcnt = mlibc::bit_util<uint32_t>::be_to_host(tzfile_time.tzh_charcnt);
 
 	if (tzfile_time.magic[0] != 'T' || tzfile_time.magic[1] != 'Z' || tzfile_time.magic[2] != 'i'
 			|| tzfile_time.magic[3] != 'f') {
@@ -566,7 +516,7 @@ bool parse_tzfile(const char *tz) {
 				+ tzfile_time.tzh_timecnt * sizeof(int32_t)
 				+ tzfile_time.tzh_timecnt * sizeof(uint8_t)
 				+ i * sizeof(ttinfo), sizeof(ttinfo));
-		time_info.tt_gmtoff = mlibc::bit_util<uint32_t>::byteswap(time_info.tt_gmtoff);
+		time_info.tt_gmtoff = mlibc::bit_util<uint32_t>::be_to_host(time_info.tt_gmtoff);
 		if (!time_info.tt_isdst && !found_std) {
 			tznameStorage[tznameNormal] = {abbrevs + time_info.tt_abbrind, getAllocator()};
 			tzname[tznameNormal] = tznameStorage[tznameNormal].data();
@@ -645,17 +595,17 @@ int nanosleep(const struct timespec *req, struct timespec *rem) {
 		return -1;
 	}
 
-	if(!mlibc::sys_sleep) {
+	if constexpr (!mlibc::IsImplemented<Sleep>) {
 		MLIBC_MISSING_SYSDEP();
 		__ensure(!"Cannot continue without sys_sleep()");
 	}
 
 	struct timespec tmp = *req;
 
-	int e = mlibc::sys_sleep(&tmp.tv_sec, &tmp.tv_nsec);
+	int e = mlibc::sysdep_or_panic<Sleep>(&tmp.tv_sec, &tmp.tv_nsec);
 	if (!e)
 		return 0;
-	else if (e == EINTR)
+	else if (e == EINTR && rem)
 		*rem = tmp;
 
 	errno = e;
@@ -663,8 +613,7 @@ int nanosleep(const struct timespec *req, struct timespec *rem) {
 }
 
 int clock_getres(clockid_t clockid, struct timespec *res) {
-	MLIBC_CHECK_OR_ENOSYS(mlibc::sys_clock_getres, -1);
-	if(int e = mlibc::sys_clock_getres(clockid, &res->tv_sec, &res->tv_nsec); e) {
+	if(int e = mlibc::sysdep_or_enosys<ClockGetres>(clockid, &res->tv_sec, &res->tv_nsec); e) {
 		errno = e;
 		return -1;
 	}
@@ -672,7 +621,7 @@ int clock_getres(clockid_t clockid, struct timespec *res) {
 }
 
 int clock_gettime(clockid_t clock, struct timespec *time) {
-	if(int e = mlibc::sys_clock_get(clock, &time->tv_sec, &time->tv_nsec); e) {
+	if(int e = mlibc::sysdep<ClockGet>(clock, &time->tv_sec, &time->tv_nsec); e) {
 		errno = e;
 		return -1;
 	}
@@ -685,7 +634,7 @@ int clock_nanosleep(clockid_t clockid, int flags, const struct timespec *req, st
 	if (flags & TIMER_ABSTIME) {
 		time_t secs = 0;
 		long nanos = 0;
-		if(int e = mlibc::sys_clock_get(clockid, &secs, &nanos); e) {
+		if(int e = mlibc::sysdep<ClockGet>(clockid, &secs, &nanos); e) {
 			errno = e;
 			return -1;
 		}
@@ -700,7 +649,7 @@ int clock_nanosleep(clockid_t clockid, int flags, const struct timespec *req, st
 			relativeTime.tv_sec = req->tv_sec - secs;
 			relativeTime.tv_nsec = req->tv_nsec - nanos;
 			if (relativeTime.tv_nsec < 0) {
-				relativeTime.tv_sec -= 0;
+				relativeTime.tv_sec -= 1;
 				relativeTime.tv_nsec += 1e9;
 			}
 		}
@@ -712,8 +661,7 @@ int clock_nanosleep(clockid_t clockid, int flags, const struct timespec *req, st
 }
 
 int clock_settime(clockid_t clock, const struct timespec *time) {
-	MLIBC_CHECK_OR_ENOSYS(mlibc::sys_clock_set, -1);
-	if(int e = mlibc::sys_clock_set(clock, time->tv_sec, time->tv_nsec); e) {
+	if(int e = mlibc::sysdep_or_enosys<ClockSet>(clock, time->tv_sec, time->tv_nsec); e) {
 		errno = e;
 		return -1;
 	}
@@ -723,7 +671,7 @@ int clock_settime(clockid_t clock, const struct timespec *time) {
 time_t time(time_t *out) {
 	time_t secs;
 	long nanos;
-	if(int e = mlibc::sys_clock_get(CLOCK_REALTIME, &secs, &nanos); e) {
+	if(int e = mlibc::sysdep<ClockGet>(CLOCK_REALTIME, &secs, &nanos); e) {
 		errno = e;
 		return (time_t)-1;
 	}
@@ -848,12 +796,12 @@ int unix_local_from_gmt_tzfile(time_t unix_gmt, time_t *offset, bool *dst, frg::
 	frg::string<MemoryAllocator> path = parse_tzfile_path(tz);
 
 	// Check if file exists
-	if (!mlibc::sys_stat) {
+	if constexpr (!mlibc::IsImplemented<Stat>) {
 		MLIBC_MISSING_SYSDEP();
 		__ensure(!"cannot proceed without sys_stat");
 	}
 	struct stat info;
-	if (mlibc::sys_stat(mlibc::fsfd_target::path, -1, path.data(), 0, &info))
+	if (mlibc::sysdep_or_panic<Stat>(mlibc::fsfd_target::path, -1, path.data(), 0, &info))
 		return -1;
 
 	// FIXME: Make this fallible so the above check is not needed.
@@ -862,12 +810,12 @@ int unix_local_from_gmt_tzfile(time_t unix_gmt, time_t *offset, bool *dst, frg::
 	// TODO(geert): we can probably cache this somehow
 	tzfile tzfile_time;
 	memcpy(&tzfile_time, reinterpret_cast<char *>(window.get()), sizeof(tzfile));
-	tzfile_time.tzh_ttisgmtcnt = mlibc::bit_util<uint32_t>::byteswap(tzfile_time.tzh_ttisgmtcnt);
-	tzfile_time.tzh_ttisstdcnt = mlibc::bit_util<uint32_t>::byteswap(tzfile_time.tzh_ttisstdcnt);
-	tzfile_time.tzh_leapcnt = mlibc::bit_util<uint32_t>::byteswap(tzfile_time.tzh_leapcnt);
-	tzfile_time.tzh_timecnt = mlibc::bit_util<uint32_t>::byteswap(tzfile_time.tzh_timecnt);
-	tzfile_time.tzh_typecnt = mlibc::bit_util<uint32_t>::byteswap(tzfile_time.tzh_typecnt);
-	tzfile_time.tzh_charcnt = mlibc::bit_util<uint32_t>::byteswap(tzfile_time.tzh_charcnt);
+	tzfile_time.tzh_ttisgmtcnt = mlibc::bit_util<uint32_t>::be_to_host(tzfile_time.tzh_ttisgmtcnt);
+	tzfile_time.tzh_ttisstdcnt = mlibc::bit_util<uint32_t>::be_to_host(tzfile_time.tzh_ttisstdcnt);
+	tzfile_time.tzh_leapcnt = mlibc::bit_util<uint32_t>::be_to_host(tzfile_time.tzh_leapcnt);
+	tzfile_time.tzh_timecnt = mlibc::bit_util<uint32_t>::be_to_host(tzfile_time.tzh_timecnt);
+	tzfile_time.tzh_typecnt = mlibc::bit_util<uint32_t>::be_to_host(tzfile_time.tzh_typecnt);
+	tzfile_time.tzh_charcnt = mlibc::bit_util<uint32_t>::be_to_host(tzfile_time.tzh_charcnt);
 
 	if (tzfile_time.magic[0] != 'T' || tzfile_time.magic[1] != 'Z' || tzfile_time.magic[2] != 'i'
 			|| tzfile_time.magic[3] != 'f') {
@@ -886,7 +834,7 @@ int unix_local_from_gmt_tzfile(time_t unix_gmt, time_t *offset, bool *dst, frg::
 		int32_t ttime;
 		memcpy(&ttime, reinterpret_cast<char *>(window.get()) + sizeof(tzfile)
 				+ i * sizeof(int32_t), sizeof(int32_t));
-		ttime = mlibc::bit_util<uint32_t>::byteswap(ttime);
+		ttime = mlibc::bit_util<uint32_t>::be_to_host(ttime);
 		// If we are before the first transition, the format dicates that
 		// the first ttinfo entry should be used (and not the ttinfo entry pointed
 		// to by the first transition time).
@@ -914,7 +862,7 @@ int unix_local_from_gmt_tzfile(time_t unix_gmt, time_t *offset, bool *dst, frg::
 			+ tzfile_time.tzh_timecnt * sizeof(int32_t)
 			+ tzfile_time.tzh_timecnt * sizeof(uint8_t)
 			+ ttinfo_index * sizeof(ttinfo), sizeof(ttinfo));
-	time_info.tt_gmtoff = mlibc::bit_util<uint32_t>::byteswap(time_info.tt_gmtoff);
+	time_info.tt_gmtoff = mlibc::bit_util<uint32_t>::be_to_host(time_info.tt_gmtoff);
 
 	char *abbrevs = reinterpret_cast<char *>(window.get()) + sizeof(tzfile)
 		+ tzfile_time.tzh_timecnt * sizeof(int32_t)

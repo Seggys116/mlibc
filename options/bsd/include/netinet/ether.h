@@ -14,7 +14,6 @@ char *ether_ntoa(const struct ether_addr *__addr);
 char *ether_ntoa_r(const struct ether_addr *__p_a, char *__x);
 
 struct ether_addr *ether_aton(const char *__asc);
-struct ether_addr *ether_aton_r(const char *__asc, struct ether_addr *__addr);
 
 #endif /* !__MLIBC_ABI_ONLY */
 

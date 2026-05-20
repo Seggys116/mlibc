@@ -9,6 +9,10 @@ project(
 	meson_version: '>=1.3.0',
 )
 
+if meson.is_subproject()
+	error('mlibc cannot be correctly used as a meson subproject. Instead, bootstrap a compiler, use mlibc headers and mlibc proper to build a correct toolchain.')
+endif
+
 fs = import('fs')
 
 rtld_include_dirs = [
@@ -94,13 +98,13 @@ if not headers_only
 
 	libsmarter_dep = dependency(
 		'libsmarter',
-		default_options: [],
+		default_options: ['no_install=true'],
 		fallback: ['libsmarter', 'libsmarter_dep'],
 	)
 	libc_deps += libsmarter_dep
 	rtld_deps += libsmarter_dep
 
-	mlibc_c_args = ['-Wno-unused-function', '-D__MLIBC_BUILDING_MLIBC', '-nostdinc', '-fno-builtin', '-ffreestanding']
+	mlibc_c_args = ['-Wno-unused-function', '-D__MLIBC_BUILDING_MLIBC', '-fno-builtin', '-ffreestanding']
 	mlibc_link_args = ['-nostdlib']
 	add_project_arguments('-Werror=misleading-indentation', language: ['c', 'cpp'])
 	add_project_arguments('-fno-rtti', '-fno-exceptions', language: 'cpp')
@@ -246,12 +250,6 @@ if host_machine.system() == 'linux'
 	internal_conf.set10('MLIBC_MMAP_ALLOCATE_DSO', true)
 	internal_conf.set10('MLIBC_MAP_FILE_WINDOWS', true)
 	subdir('sysdeps/linux')
-elif host_machine.system() == 'unified'
-	rtld_include_dirs += include_directories('sysdeps/unified/include')
-	libc_include_dirs += include_directories('sysdeps/unified/include')
-	internal_conf.set10('MLIBC_MAP_DSO_SEGMENTS', true)
-	internal_conf.set10('MLIBC_MMAP_ALLOCATE_DSO', true)
-	subdir('sysdeps/unified')
 elif host_machine.system() == 'managarm'
 	# TODO: Adopt the include_directories() commands from the managarm meson.build.
 	rtld_include_dirs += include_directories('sysdeps/managarm/include')
@@ -278,10 +276,26 @@ elif host_machine.system() == 'astral'
 	internal_conf.set10('MLIBC_MAP_FILE_WINDOWS', true)
 	internal_conf.set10('MLIBC_MMAP_ALLOCATE_DSO', true)
 	subdir('sysdeps/astral')
-elif host_machine.system() == 'menix'
-	rtld_include_dirs += include_directories('sysdeps/menix/include')
-	libc_include_dirs += include_directories('sysdeps/menix/include')
-	subdir('sysdeps/menix')
+elif host_machine.system() == 'obos'
+	rtld_include_dirs += include_directories('sysdeps/obos/include')
+	libc_include_dirs += include_directories('sysdeps/obos/include')
+	internal_conf.set10('MLIBC_MAP_DSO_SEGMENTS', true)
+	internal_conf.set10('MLIBC_MAP_FILE_WINDOWS', true)
+	internal_conf.set10('MLIBC_MMAP_ALLOCATE_DSO', true)
+	subdir('sysdeps/obos')
+elif host_machine.system() == 'zinnia'
+	rtld_include_dirs += include_directories('sysdeps/zinnia/include')
+	libc_include_dirs += include_directories('sysdeps/zinnia/include')
+	internal_conf.set10('MLIBC_MAP_DSO_SEGMENTS', true)
+	internal_conf.set10('MLIBC_MMAP_ALLOCATE_DSO', true)
+	internal_conf.set10('MLIBC_MAP_FILE_WINDOWS', true)
+	subdir('sysdeps/zinnia')
+elif host_machine.system() == 'unified'
+	rtld_include_dirs += include_directories('sysdeps/unified/include')
+	libc_include_dirs += include_directories('sysdeps/unified/include')
+	internal_conf.set10('MLIBC_MAP_DSO_SEGMENTS', true)
+	internal_conf.set10('MLIBC_MMAP_ALLOCATE_DSO', true)
+	subdir('sysdeps/unified')
 # ANCHOR: demo-sysdeps
 elif host_machine.system() == 'demo'
 	subdir('sysdeps/demo')
@@ -303,6 +317,7 @@ linux_timerfd_option = sysdep_supported_options.get('linux-timerfd', linux_optio
 linux_signalfd_option = sysdep_supported_options.get('linux-signalfd', linux_option)
 linux_eventfd_option = sysdep_supported_options.get('linux-eventfd', linux_option)
 linux_reboot_option = sysdep_supported_options.get('linux-reboot', linux_option)
+linux_wrappers_option = linux_option and sysdep_supported_options.get('linux_wrappers', false)
 
 mlibc_conf.set10('__MLIBC_POSIX_OPTION', posix_option)
 mlibc_conf.set10('__MLIBC_LINUX_OPTION', linux_option)
@@ -313,6 +328,7 @@ mlibc_conf.set10('__MLIBC_LINUX_TIMERFD_OPTION', linux_timerfd_option)
 mlibc_conf.set10('__MLIBC_LINUX_SIGNALFD_OPTION', linux_signalfd_option)
 mlibc_conf.set10('__MLIBC_LINUX_EVENTFD_OPTION', linux_eventfd_option)
 mlibc_conf.set10('__MLIBC_LINUX_REBOOT_OPTION', linux_reboot_option)
+mlibc_conf.set10('__MLIBC_LINUX_WRAPPERS_OPTION', linux_wrappers_option)
 mlibc_conf.set10('__MLIBC_SYSDEP_HAS_BITS_SYSCALL_H', provides_bits_syscall_h)
 
 rtld_include_dirs += include_directories('options/ansi/include')
@@ -368,6 +384,11 @@ endif
 if glibc_option
 	rtld_include_dirs += include_directories('options/glibc/include')
 	libc_include_dirs += include_directories('options/glibc/include')
+endif
+
+if linux_wrappers_option
+	rtld_include_dirs += include_directories('options/linux-wrappers/include')
+	libc_include_dirs += include_directories('options/linux-wrappers/include')
 endif
 
 if bsd_option
@@ -438,7 +459,6 @@ internal_sources = [
 	'options/internal/generic/threads.cpp',
 	'options/internal/generic/search.cpp',
 	'options/internal/generic/stdlib.cpp',
-	'options/internal/generic/time.cpp',
 	'options/internal/generic/wide.cpp',
 	'options/internal/gcc/stack_protector.cpp',
 	'options/internal/gcc/guard-abi.cpp',
@@ -492,6 +512,7 @@ if not no_headers
 		'options/internal/include/bits/search.h',
 		'options/internal/include/bits/getopt.h',
 		'options/internal/include/bits/reclen_t.h',
+		'options/internal/include/bits/timeval.h',
 		subdir: 'bits'
 	)
 endif
@@ -518,6 +539,7 @@ subdir('options/ansi')
 subdir('options/posix')
 subdir('options/lsb')
 subdir('options/glibc')
+subdir('options/linux-wrappers')
 subdir('options/linux')
 subdir('options/bsd')
 subdir('options/linux-epoll')
@@ -559,7 +581,11 @@ if not headers_only
 
 	if c_compiler.get_id() == 'clang'
 		libc_cpp_args += ['-fno-sanitize=function', '-Wno-vla-cxx-extension']
+		# Disable libstdc++ assertions to avoid undefined references to std::__glibcxx_assert_fail
+		libc_cpp_args += ['-U_GLIBCXX_ASSERTIONS', '-D_GLIBCXX_NO_ASSERTIONS']
 		ld_cpp_args += ['-fno-sanitize=function']
+	elif c_compiler.get_id() == 'gcc'
+		libc_cpp_args += ['-nostdinc']
 	endif
 
 	libc_all_sources = [

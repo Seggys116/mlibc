@@ -37,6 +37,7 @@ enum class LinkerError {
 };
 
 uint32_t elf64Hash(frg::string_view string);
+uint32_t gnuHash(frg::string_view string);
 
 // --------------------------------------------------------
 // ObjectRepository
@@ -116,6 +117,11 @@ enum class HashStyle {
 	none,
 	systemV,
 	gnu
+};
+
+struct SystemVHashTableHeader {
+	uint32_t nBuckets;
+	uint32_t nChain;
 };
 
 struct GnuHashTableHeader {
@@ -341,6 +347,7 @@ struct RuntimeTlsMap {
 	frg::vector<SharedObject *, MemoryAllocator> indices;
 };
 
+extern frg::manual_box<FutexLock> runtimeTlsMapLock;
 extern frg::manual_box<RuntimeTlsMap> runtimeTlsMap;
 
 Tcb *allocateTcb();

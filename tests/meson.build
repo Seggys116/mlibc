@@ -38,11 +38,26 @@ all_test_cases = [
 	'ansi/mbstowcs',
 	'ansi/locale',
 	'ansi/asctime',
+	'ansi/wcstof',
+	'ansi/fputwc',
+	'ansi/mbrtowc',
+	'ansi/ungetwc',
+	'ansi/fgetws',
+	'ansi/swscanf',
+	'ansi/fwscanf',
+	'ansi/swprintf',
+	'ansi/wcsftime',
+	'ansi/wctype',
+	'ansi/wctrans',
+	'ansi/nanosleep',
+	'ansi/btowc',
+	'ansi/wctob',
 	'bsd/ns_get_put',
 	'bsd/reallocarray',
 	'bsd/strl',
 	'bsd/sbrk',
 	'bsd/getloadavg',
+	'posix/sched_setscheduler',
 	'posix/inet_ntop',
 	'posix/inet_pton',
 	'posix/access',
@@ -127,6 +142,21 @@ all_test_cases = [
 	'posix/strfmon',
 	'posix/sig2str',
 	'posix/getlogin_r',
+	'posix/inet_aton',
+	'posix/pthread_cond_signal',
+	'posix/protoent',
+	'posix/lfind',
+	'posix/lsearch',
+	'posix/nftw',
+	'posix/wcslcat',
+	'posix/wcslcpy',
+	'posix/wcpcpy',
+	'posix/wcpncpy',
+	'posix/getwchar',
+	'posix/strcoll_l',
+	'posix/strxfrm_l',
+	'posix/wcscoll_l',
+	'posix/wcsxfrm_l',
 	'glibc/getopt',
 	'glibc/ffsl-ffsll',
 	'glibc/error_message_count',
@@ -139,6 +169,9 @@ all_test_cases = [
 	'glibc/rpmatch',
 	'glibc/strverscmp',
 	'glibc/memmem',
+	'glibc/stdio_ext',
+	'glibc/_dl_find_object',
+	'glibc/shadow',
 	'linux/xattr',
 	'linux/pthread_setname_np',
 	'linux/pthread_attr',
@@ -150,6 +183,8 @@ all_test_cases = [
 	'linux/ppoll',
 	'linux/utmp',
 	'linux/utmpx',
+	'linux-wrappers/rt_tgsigqueueinfo',
+	'linux-wrappers/rt_sigqueueinfo',
 ]
 
 if host_machine.system() == 'linux'
@@ -188,6 +223,10 @@ host_libc_noasan_test_cases = [
 	'posix/locale', # encounters memory leaks
 	'ansi/calloc', # does some overflowing
 	'linux/pthread_attr', # encounters memory leaks
+	'posix/strcoll_l', # glibc leaks memory internally
+	'posix/wcscoll_l', # glibc leaks memory internally
+	'posix/strxfrm_l', # glibc leaks memory internally
+	'posix/wcsxfrm_l', # glibc leaks memory internally
 ]
 
 cross_libc_excluded_test_cases = [
@@ -317,6 +356,8 @@ foreach test_name : all_test_cases
 	elif test_subdir == 'posix' and not posix_option
 		continue
 	elif test_subdir == 'linux' and not linux_option
+		continue
+	elif test_subdir == 'linux-wrappers' and not linux_wrappers_option
 		continue
 	endif
 

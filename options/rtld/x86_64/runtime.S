@@ -29,23 +29,13 @@ __mlibcTlsdescDynamic:
 .global pltRelocateStub
 pltRelocateStub:
 	# we need to save / restore all registers than can hold function arguments
-	# The resolver is entered transparently from the caller's PLT path. Preserve
-	# the SysV callee-saved set as well: lazyRelocate is ordinary C++ and may use
-	# those registers internally, while the final target function has not yet had
-	# a chance to establish its own ABI boundary.
+	# we do not need to save callee-saved registers as they will not be trashed by lazyRelocate
 	# TODO: save floating point argument registers
 
 	push %rsi
 	push %rdi
 	mov 16(%rsp), %rdi
 	mov 24(%rsp), %rsi
-
-	push %rbx
-	push %rbp
-	push %r12
-	push %r13
-	push %r14
-	push %r15
 
 	push %rax
 	push %rcx
@@ -63,13 +53,6 @@ pltRelocateStub:
 	pop %rdx
 	pop %rcx
 	pop %rax
-
-	pop %r15
-	pop %r14
-	pop %r13
-	pop %r12
-	pop %rbp
-	pop %rbx
 	
 	pop %rdi
 	pop %rsi
@@ -77,3 +60,4 @@ pltRelocateStub:
 	jmp *%r11
 
 .section .note.GNU-stack,"",%progbits
+

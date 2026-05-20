@@ -3,12 +3,13 @@
 #include <sys/signalfd.h>
 
 #include <bits/ensure.h>
+#include <mlibc/all-sysdeps.hpp>
 #include <mlibc/debug.hpp>
-#include <mlibc/linux-signalfd-sysdeps.hpp>
+
+static_assert(sizeof(signalfd_siginfo) == 128, "signalfd_siginfo must be exactly 128 bytes!");
 
 int signalfd(int fd, const sigset_t *mask, int flags) {
-	MLIBC_CHECK_OR_ENOSYS(mlibc::sys_signalfd_create, -1);
-	if(int e = mlibc::sys_signalfd_create(mask, flags, &fd); e) {
+	if(int e = mlibc::sysdep_or_enosys<SignalfdCreate>(mask, flags, &fd); e) {
 		errno = e;
 		return -1;
 	}

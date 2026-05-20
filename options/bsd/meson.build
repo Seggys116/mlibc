@@ -16,9 +16,10 @@ if not no_headers
 		'include/pty.h',
 		'include/utmp.h',
 	)
-	# nameser.h and telnet.h are now installed by posix/meson.build
 	install_headers(
+		'include/arpa/nameser.h',
 		'include/arpa/nameser_compat.h',
+		'include/arpa/telnet.h',
 		subdir: 'arpa'
 	)
 	install_headers(

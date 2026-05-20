@@ -6,18 +6,15 @@
 #include <string.h>
 #include <limits.h>
 
+#include <bits/ensure.h>
 #include <frg/vector.hpp>
+#include <mlibc/all-sysdeps.hpp>
 #include <mlibc/allocator.hpp>
 #include <mlibc/debug.hpp>
-#include <mlibc/posix-sysdeps.hpp>
-#include <bits/ensure.h>
 
 ssize_t readv(int fd, const struct iovec *iovs, int iovc) {
 	ssize_t read_bytes = 0;
-
-	auto sysdep = MLIBC_CHECK_OR_ENOSYS(mlibc::sys_readv, -1);
-
-	if (int e = sysdep(fd, iovs, iovc, &read_bytes); e) {
+	if (int e = mlibc::sysdep_or_enosys<Readv>(fd, iovs, iovc, &read_bytes); e) {
 		errno = e;
 		return -1;
 	}
@@ -30,9 +27,8 @@ ssize_t writev(int fd, const struct iovec *iovs, int iovc) {
 
 	ssize_t written = 0;
 
-	auto sysdep = mlibc::sys_writev;
-	if(sysdep) {
-		int e = sysdep(fd, iovs, iovc, &written);
+	if constexpr (mlibc::IsImplemented<Writev>) {
+		int e = mlibc::sysdep_or_panic<Writev>(fd, iovs, iovc, &written);
 		if(e) {
 			errno = e;
 			return -1;
@@ -69,70 +65,12 @@ ssize_t writev(int fd, const struct iovec *iovs, int iovc) {
 	return written;
 }
 
-ssize_t preadv(int fd, const struct iovec *iovs, int iovc, off_t offset) {
-	if(iovc < 0) {
-		errno = EINVAL;
-		return -1;
-	}
-	if(iovc == 0)
-		return 0;
-
-	ssize_t total_read = 0;
-	off_t current = offset;
-
-	for(int i = 0; i < iovc; i++) {
-		const auto base = reinterpret_cast<char *>(iovs[i].iov_base);
-		size_t len = iovs[i].iov_len;
-		if(!len)
-			continue;
-
-		ssize_t r = pread(fd, base, len, current);
-		if(r < 0) {
-			return total_read > 0 ? total_read : -1;
-		}
-		if(r == 0) {
-			return total_read; // EOF
-		}
-
-		total_read += r;
-		current += r;
-		if(static_cast<size_t>(r) < len)
-			return total_read; // short read
-	}
-
-	return total_read;
+ssize_t preadv(int, const struct iovec *, int, off_t) {
+	__ensure(!"Not implemented");
+	__builtin_unreachable();
 }
 
-ssize_t pwritev(int fd, const struct iovec *iovs, int iovc, off_t offset) {
-	if(iovc < 0) {
-		errno = EINVAL;
-		return -1;
-	}
-	if(iovc == 0)
-		return 0;
-
-	ssize_t total_written = 0;
-	off_t current = offset;
-
-	for(int i = 0; i < iovc; i++) {
-		const auto base = reinterpret_cast<const char *>(iovs[i].iov_base);
-		size_t len = iovs[i].iov_len;
-		if(!len)
-			continue;
-
-		ssize_t w = pwrite(fd, base, len, current);
-		if(w < 0) {
-			return total_written > 0 ? total_written : -1;
-		}
-		if(w == 0) {
-			return total_written;
-		}
-
-		total_written += w;
-		current += w;
-		if(static_cast<size_t>(w) < len)
-			return total_written; // short write
-	}
-
-	return total_written;
+ssize_t pwritev(int, const struct iovec *, int, off_t) {
+	__ensure(!"Not implemented");
+	__builtin_unreachable();
 }

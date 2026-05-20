@@ -262,26 +262,52 @@ void tdestroy(void *root, void (*free_node)(void *)) {
 	}
 }
 
-void *lsearch(const void *key, void *base, size_t *nelp, size_t width,
-		int (*compar)(const void *, const void *)) {
-	(void)key;
-	(void)base;
-	(void)nelp;
-	(void)width;
-	(void)compar;
-	__ensure(!"Not implemented");
-	__builtin_unreachable();
+void *lsearch(
+    const void *key,
+    void *base,
+    size_t *nelp,
+    size_t width,
+    int (*compar)(const void *, const void *)
+) {
+	if (!nelp)
+		return nullptr;
+
+	auto *current = static_cast<char *>(base);
+	size_t n = *nelp;
+
+	for (size_t i = 0; i < n; i++) {
+		if (compar(key, current) == 0)
+			return current;
+
+		current += width;
+	}
+
+	memcpy(current, key, width);
+
+	(*nelp)++;
+	return current;
 }
 
-void *lfind(const void *key, const void *base, size_t *nelp,
-		size_t width, int (*compar)(const void *, const void *)) {
-	(void)key;
-	(void)base;
-	(void)nelp;
-	(void)width;
-	(void)compar;
-	__ensure(!"Not implemented");
-	__builtin_unreachable();
+void *lfind(
+    const void *key,
+    const void *base,
+    size_t *nelp,
+    size_t width,
+    int (*compar)(const void *, const void *)
+) {
+	if (!nelp)
+		return nullptr;
+
+	auto *current = static_cast<const char *>(base);
+	size_t n = *nelp;
+
+	for (size_t i = 0; i < n; i++) {
+		if (compar(key, current) == 0)
+			return const_cast<char *>(current);
+		current += width;
+	}
+
+	return nullptr;
 }
 
 namespace {
@@ -302,4 +328,30 @@ ENTRY *hsearch(ENTRY item, ACTION action) {
 		return nullptr;
 	}
 	return ret;
+}
+
+void insque(void *element, void *pred) {
+	struct qelem *e = reinterpret_cast<struct qelem *>(element);
+	struct qelem *p = reinterpret_cast<struct qelem *>(pred);
+
+	if (!p) {
+		e->q_forw = e->q_back = nullptr;
+		return;
+	}
+
+	e->q_forw = p->q_forw;
+	e->q_back = p;
+	p->q_forw = e;
+
+	if (e->q_forw)
+		e->q_forw->q_back = e;
+}
+
+void remque(void *element) {
+	struct qelem *e = reinterpret_cast<struct qelem *>(element);
+
+	if (e->q_forw)
+		e->q_forw->q_back = e->q_back;
+	if (e->q_back)
+		e->q_back->q_forw = e->q_forw;
 }

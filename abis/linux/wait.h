@@ -12,7 +12,6 @@
 
 #if __MLIBC_LINUX_OPTION
 
-#define __WNOTHREAD 0x20000000
 #define __WALL 0x40000000
 #define __WCLONE 0x80000000
 

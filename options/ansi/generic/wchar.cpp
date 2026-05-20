@@ -11,10 +11,11 @@
 
 namespace {
 	// All conversion functions mbrlen(), mbrtowc(), wcrtomb(),
-	// mbsrtowcs() and wcsrtombs() have an internal state.
+	// mbsrtowcs(), mbsnrtowcs() and wcsrtombs() have an internal state.
 	__mlibc_mbstate mbrlen_state = __MLIBC_MBSTATE_INITIALIZER;
 	__mlibc_mbstate mbrtowc_state = __MLIBC_MBSTATE_INITIALIZER;
 	__mlibc_mbstate mbsrtowcs_state = __MLIBC_MBSTATE_INITIALIZER;
+	__mlibc_mbstate mbsnrtowcs_state = __MLIBC_MBSTATE_INITIALIZER;
 	__mlibc_mbstate wcsrtombs_state = __MLIBC_MBSTATE_INITIALIZER;
 } // namespace
 
@@ -25,14 +26,30 @@ wint_t btowc(int c) {
 	char nc = c;
 	auto cc = mlibc::current_charcode();
 	wchar_t wc;
-	if(auto e = cc->promote_wtranscode(nc, wc); e != mlibc::charcode_error::null)
+
+	auto e = cc->promote_wtranscode(nc, wc);
+	if(e != mlibc::transcode_status::null_terminator && e != mlibc::transcode_status::input_exhausted)
 		return WEOF;
 	return wc;
 }
 
 int wctob(wint_t wc) {
-	// TODO: Revisit this once we have character encoding functions.
-	return wc;
+	if (wc == WEOF)
+		return EOF;
+
+	char c;
+	wchar_t w = wc;
+	mlibc::code_seq<char> nseq{&c, &c + 1};
+	mlibc::code_seq<const wchar_t> wseq{&w, &w + 1};
+	auto cc = mlibc::current_charcode();
+	mbstate_t st{};
+
+	auto e = cc->encode_wtranscode(nseq, wseq, st);
+	if (e == mlibc::transcode_status::null_terminator)
+		return '\0';
+	else if(e != mlibc::transcode_status::input_exhausted)
+		return EOF;
+	return c;
 }
 
 int mbsinit(const mbstate_t *stp) {
@@ -54,14 +71,18 @@ size_t mbrlen(const char *__restrict mbs, size_t mb_limit, mbstate_t *__restrict
 
 	mlibc::code_seq<const char> nseq{mbs, mbs + mb_limit};
 	mlibc::code_seq<wchar_t> wseq{&wc, &wc + 1};
-	if(auto e = cc->decode_wtranscode(nseq, wseq, *stp); e != mlibc::charcode_error::null) {
-		if(e == mlibc::charcode_error::input_underflow)
-			return static_cast<size_t>(-2);
-		__ensure(e == mlibc::charcode_error::illegal_input);
+	auto e = cc->decode_wtranscode(nseq, wseq, *stp);
+	if (e == mlibc::transcode_status::input_exhausted || e == mlibc::transcode_status::output_exhausted) {
+		return nseq.it - mbs;
+	} else if (e == mlibc::transcode_status::null_terminator) {
+		return 0;
+	} else if (e == mlibc::transcode_status::input_underflow) {
+		return static_cast<size_t>(-2);
+	} else {
+		__ensure(e == mlibc::transcode_status::illegal_input);
 		errno = EILSEQ;
 		return static_cast<size_t>(-1);
 	}
-	return nseq.it - mbs;
 }
 
 size_t mbrtowc(wchar_t *__restrict wcp, const char *__restrict mbs, size_t mb_limit, mbstate_t *__restrict stp) {
@@ -80,20 +101,19 @@ size_t mbrtowc(wchar_t *__restrict wcp, const char *__restrict mbs, size_t mb_li
 
 	mlibc::code_seq<const char> nseq{mbs, mbs + mb_limit};
 	mlibc::code_seq<wchar_t> wseq{wcp, wcp + 1};
-	if(auto e = cc->decode_wtranscode(nseq, wseq, *stp); e != mlibc::charcode_error::null) {
-		if(e == mlibc::charcode_error::input_underflow)
-			return static_cast<size_t>(-2);
-		__ensure(e == mlibc::charcode_error::illegal_input);
+	auto e = cc->decode_wtranscode(nseq, wseq, *stp);
+	if (e == mlibc::transcode_status::input_exhausted || e == mlibc::transcode_status::output_exhausted) {
+		return nseq.it - mbs;
+	} else if (e == mlibc::transcode_status::null_terminator) {
+		*stp = __MLIBC_MBSTATE_INITIALIZER;
+		*wcp = 0;
+		return 0;
+	} else if(e == mlibc::transcode_status::input_underflow) {
+		return static_cast<size_t>(-2);
+	} else {
+		__ensure(e == mlibc::transcode_status::illegal_input);
 		errno = EILSEQ;
 		return static_cast<size_t>(-1);
-	}else{
-		if (*mbs) {
-			return nseq.it - mbs;
-		} else {
-			*stp = __MLIBC_MBSTATE_INITIALIZER;
-			*wcp = 0;
-			return 0;
-		}
 	}
 }
 
@@ -108,15 +128,21 @@ size_t wcrtomb(char *__restrict mbs, wchar_t wc, mbstate_t *__restrict stp) {
 
 	mlibc::code_seq<const wchar_t> wseq{&wc, &wc + 1};
 	mlibc::code_seq<char> nseq{mbs, mbs + MB_LEN_MAX};
-	if(auto e = cc->encode_wtranscode(nseq, wseq, *stp); e != mlibc::charcode_error::null) {
-		__ensure(e == mlibc::charcode_error::illegal_input);
+
+	auto e = cc->encode_wtranscode(nseq, wseq, *stp);
+	if (e == mlibc::transcode_status::input_exhausted) {
+		size_t n = nseq.it - mbs;
+		// If we reached a null terminator, we need to reset mbstate_t
+		*stp = __MLIBC_MBSTATE_INITIALIZER;
+		return n;
+	} else if (e == mlibc::transcode_status::null_terminator) {
+		mbs[0] = '\0';
+		*stp = __MLIBC_MBSTATE_INITIALIZER;
+		return 1;
+	} else {
+		__ensure(e == mlibc::transcode_status::illegal_input);
 		errno = EILSEQ;
 		return static_cast<size_t>(-1);
-	}else{
-		size_t n = nseq.it - mbs;
-		if(!n) // Null-terminate resulting wide string.
-			*mbs = 0;
-		return n;
 	}
 }
 
@@ -124,7 +150,6 @@ size_t mbsrtowcs(wchar_t *__restrict wcs, const char **__restrict mbsp, size_t w
 	__ensure(mbsp);
 
 	auto cc = mlibc::current_charcode();
-	__mlibc_mbstate st = __MLIBC_MBSTATE_INITIALIZER;
 	mlibc::code_seq<const char> nseq{*mbsp, nullptr};
 	mlibc::code_seq<wchar_t> wseq{wcs, wcs ? wcs + wc_limit : nullptr};
 
@@ -133,24 +158,31 @@ size_t mbsrtowcs(wchar_t *__restrict wcs, const char **__restrict mbsp, size_t w
 
 	if(!wcs) {
 		size_t size;
-		if(auto e = cc->decode_wtranscode_length(nseq, &size, st); e != mlibc::charcode_error::null) {
-			__ensure(e == mlibc::charcode_error::illegal_input || e == mlibc::charcode_error::input_underflow);
+		if(auto e = cc->decode_wtranscode_length(nseq, &size, *stp); e != mlibc::transcode_status::null_terminator) {
+			__ensure(e == mlibc::transcode_status::illegal_input || e == mlibc::transcode_status::input_underflow);
 			errno = EILSEQ;
 			return static_cast<size_t>(-1);
 		}
 		return size;
 	}
 
-	if(auto e = cc->decode_wtranscode(nseq, wseq, st); e != mlibc::charcode_error::null) {
-		__ensure(e == mlibc::charcode_error::illegal_input || e == mlibc::charcode_error::input_underflow);
-		errno = EILSEQ;
-		return static_cast<size_t>(-1);
-	}else{
+	auto e = cc->decode_wtranscode(nseq, wseq, *stp);
+	if (e == mlibc::transcode_status::null_terminator) {
 		size_t n = wseq.it - wcs;
+		*mbsp = nullptr;
+		// If we reached a null terminator, we need to reset mbstate_t
+		*stp = __MLIBC_MBSTATE_INITIALIZER;
 		if(n < wc_limit) // Null-terminate resulting wide string.
 			wcs[n] = 0;
-		*mbsp = nullptr;
 		return n;
+	} else if (e == mlibc::transcode_status::input_exhausted || e == mlibc::transcode_status::output_exhausted) {
+		size_t n = wseq.it - wcs;
+		*mbsp = nseq.it;
+		return n;
+	} else {
+		__ensure(e == mlibc::transcode_status::input_underflow || e == mlibc::transcode_status::illegal_input);
+		errno = EILSEQ;
+		return static_cast<size_t>(-1);
 	}
 }
 
@@ -158,33 +190,39 @@ size_t mbsnrtowcs(wchar_t *__restrict wcs, const char **__restrict mbsp, size_t 
 	__ensure(mbsp);
 
 	auto cc = mlibc::current_charcode();
-	__mlibc_mbstate st = __MLIBC_MBSTATE_INITIALIZER;
 	mlibc::code_seq<const char> nseq{*mbsp, (*mbsp) + mb_limit};
 	mlibc::code_seq<wchar_t> wseq{wcs, wcs ? wcs + wc_limit : nullptr};
 
 	if(!stp)
-		stp = &mbsrtowcs_state;
+		stp = &mbsnrtowcs_state;
 
 	if(!wcs) {
 		size_t size;
-		if(auto e = cc->decode_wtranscode_length(nseq, &size, st); e != mlibc::charcode_error::null && e != mlibc::charcode_error::input_underflow) {
-			__ensure(e == mlibc::charcode_error::illegal_input);
+		if(auto e = cc->decode_wtranscode_length(nseq, &size, *stp); e != mlibc::transcode_status::null_terminator && e != mlibc::transcode_status::input_exhausted && e != mlibc::transcode_status::input_underflow) {
+			__ensure(e == mlibc::transcode_status::illegal_input);
 			errno = EILSEQ;
 			return static_cast<size_t>(-1);
 		}
 		return size;
 	}
 
-	if(auto e = cc->decode_wtranscode(nseq, wseq, st); e != mlibc::charcode_error::null && e != mlibc::charcode_error::input_underflow) {
-		__ensure(e == mlibc::charcode_error::illegal_input);
-		errno = EILSEQ;
-		return static_cast<size_t>(-1);
-	}else{
+	auto e = cc->decode_wtranscode(nseq, wseq, *stp);
+	if (e == mlibc::transcode_status::null_terminator) {
 		size_t n = wseq.it - wcs;
+		*mbsp = nullptr;
+		// If we reached a null terminator, we need to reset mbstate_t
+		*stp = __MLIBC_MBSTATE_INITIALIZER;
 		if(n < wc_limit) // Null-terminate resulting wide string.
 			wcs[n] = 0;
-		*mbsp = nullptr;
 		return n;
+	} else if (e == mlibc::transcode_status::input_underflow || e == mlibc::transcode_status::input_exhausted || e == mlibc::transcode_status::output_exhausted) {
+		size_t n = wseq.it - wcs;
+		*mbsp = nseq.it;
+		return n;
+	} else {
+		__ensure(e == mlibc::transcode_status::illegal_input);
+		errno = EILSEQ;
+		return static_cast<size_t>(-1);
 	}
 }
 
@@ -198,8 +236,8 @@ size_t wcsrtombs(char *__restrict mbs, const wchar_t **__restrict wcsp, size_t m
 
 	if(!mbs) {
 		size_t size;
-		if(auto e = cc->encode_wtranscode_length(wseq, &size, *stp); e != mlibc::charcode_error::null) {
-			__ensure(e == mlibc::charcode_error::illegal_input || e == mlibc::charcode_error::input_underflow);
+		if(auto e = cc->encode_wtranscode_length(wseq, &size, *stp); e != mlibc::transcode_status::null_terminator) {
+			__ensure(e == mlibc::transcode_status::illegal_input || e == mlibc::transcode_status::input_underflow);
 			errno = EILSEQ;
 			return static_cast<size_t>(-1);
 		}
@@ -208,16 +246,23 @@ size_t wcsrtombs(char *__restrict mbs, const wchar_t **__restrict wcsp, size_t m
 
 	mlibc::code_seq<char> nseq{mbs, mbs + mb_limit};
 
-	if(auto e = cc->encode_wtranscode(nseq, wseq, *stp); e != mlibc::charcode_error::null) {
-		__ensure(e == mlibc::charcode_error::illegal_input || e == mlibc::charcode_error::input_underflow);
-		errno = EILSEQ;
-		return static_cast<size_t>(-1);
-	}else{
-		*wcsp = wseq.it;
+	auto e = cc->encode_wtranscode(nseq, wseq, *stp);
+	if (e == mlibc::transcode_status::null_terminator) {
 		size_t n = nseq.it - mbs;
-		if(n < mb_limit) // Null-terminate resulting narrow string.
+		*wcsp = nullptr;
+		// If we reached a null terminator, we need to reset mbstate_t
+		*stp = __MLIBC_MBSTATE_INITIALIZER;
+		if(n < mb_limit) // Null-terminate resulting wide string.
 			mbs[n] = 0;
 		return n;
+	} else if (e == mlibc::transcode_status::input_underflow || e == mlibc::transcode_status::output_exhausted) {
+		size_t n = nseq.it - mbs;
+		*wcsp = wseq.it;
+		return n;
+	} else {
+		__ensure(e == mlibc::transcode_status::illegal_input);
+		errno = EILSEQ;
+		return static_cast<size_t>(-1);
 	}
 }
 
@@ -232,23 +277,33 @@ size_t wcsnrtombs(char *__restrict mbs, const wchar_t **__restrict wcsp, size_t 
 
 	if(!mbs) {
 		size_t size;
-		if(auto e = cc->encode_wtranscode_length(wseq, &size, *stp); e != mlibc::charcode_error::null && e != mlibc::charcode_error::input_underflow) {
-			__ensure(e == mlibc::charcode_error::illegal_input);
+		if(auto e = cc->encode_wtranscode_length(wseq, &size, *stp); e != mlibc::transcode_status::null_terminator && e != mlibc::transcode_status::input_underflow && e != mlibc::transcode_status::input_exhausted) {
+			__ensure(e == mlibc::transcode_status::illegal_input);
 			errno = EILSEQ;
 			return static_cast<size_t>(-1);
 		}
 		return size;
 	}
 
-	if(auto e = cc->encode_wtranscode(nseq, wseq, *stp); e != mlibc::charcode_error::null && e != mlibc::charcode_error::input_underflow) {
-		__ensure(e == mlibc::charcode_error::illegal_input);
-		errno = EILSEQ;
-		return static_cast<size_t>(-1);
-	}else{
-		*wcsp = wseq.it;
+	auto e = cc->encode_wtranscode(nseq, wseq, *stp);
+	if (e == mlibc::transcode_status::null_terminator) {
 		size_t n = nseq.it - mbs;
-		if(n < mb_limit) // Null-terminate resulting narrow string.
+		*wcsp = nullptr;
+		// If we reached a null terminator, we need to reset mbstate_t
+		*stp = __MLIBC_MBSTATE_INITIALIZER;
+		if(n < mb_limit) // Null-terminate resulting wide string.
 			mbs[n] = 0;
 		return n;
+	} else if (e == mlibc::transcode_status::input_underflow
+	           || e == mlibc::transcode_status::output_overflow
+	           || e == mlibc::transcode_status::input_exhausted
+	           || e == mlibc::transcode_status::output_exhausted) {
+		size_t n = nseq.it - mbs;
+		*wcsp = wseq.it;
+		return n;
+	} else {
+		__ensure(e == mlibc::transcode_status::illegal_input);
+		errno = EILSEQ;
+		return static_cast<size_t>(-1);
 	}
 }

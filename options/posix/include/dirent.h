@@ -49,11 +49,17 @@ struct posix_dent {
 #endif
 
 struct __mlibc_dir_struct {
+	/* the dirfd */
 	int __handle;
+	/* offset into __ent_buffer for the next dirent */
 	__mlibc_size __ent_next;
+	/* valid byte count for __ent_buffer */
 	__mlibc_size __ent_limit;
 	char __ent_buffer[2048];
+	/* cached current dirent */
 	struct dirent __current;
+	/* current seek offset; should be equivalent to lseek(dirfd, 0, SEEK_CUR) */
+	long __seek_offset;
 };
 
 typedef struct __mlibc_dir_struct DIR;
@@ -78,6 +84,9 @@ struct dirent64 {
 };
 
 struct dirent64 *readdir64(DIR *__dirp);
+int scandir64(const char *__pathname, struct dirent64 ***__res, int (*__select)(const struct dirent64 *__entry),
+		int (*__compare)(const struct dirent64 **__a, const struct dirent64 **__b));
+int versionsort64(const struct dirent64 **__a, const struct dirent64 **__b);
 #endif /* __MLIBC_LINUX_OPTION && defined(_LARGEFILE64_SOURCE) */
 
 #undef __MLIBC_DIRENT_BODY
@@ -89,6 +98,7 @@ long telldir(DIR *__dirp);
 
 #if __MLIBC_GLIBC_OPTION && defined(_GNU_SOURCE)
 int versionsort(const struct dirent **__a, const struct dirent **__b);
+ssize_t getdents64(int __fd, void *__dirp, size_t __count);
 #endif /* __MLIBC_GLIBC_OPTION && defined(_GNU_SOURCE) */
 
 #endif /* !__MLIBC_ABI_ONLY */

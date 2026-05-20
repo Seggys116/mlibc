@@ -34,9 +34,11 @@ namespace mlibc {
 
 static constexpr bool logIoctls = false;
 
-int ioctl_drm(int fd, unsigned long request, void *arg, int *result, HelHandle handle);
+int ioctl_drm(int fd, unsigned long request, void *arg, int *result, HelHandle handle) CAP_REQUIRES(
+    sysdepAllocatorCapability
+);
 
-int sys_ioctl(int fd, unsigned long request, void *arg, int *result) {
+int Sysdeps<Ioctl>::operator()(int fd, unsigned long request, void *arg, int *result) {
 	if (logIoctls)
 		mlibc::infoLogger() << "mlibc: ioctl with"
 		                    << " type: 0x" << frg::hex_fmt(_IOC_TYPE(request)) << ", number: 0x"
@@ -53,18 +55,27 @@ int sys_ioctl(int fd, unsigned long request, void *arg, int *result) {
 		return ioctl_drm(fd, request, arg, result, handle);
 	}
 
-	auto handle_siocgif =
-	    [&arg, &request, &result](
-	        void (*req_setup)(managarm::fs::IfreqRequest<MemoryAllocator> &req, struct ifreq *ifr),
-	        int (*resp_parse)(managarm::fs::IfreqReply<MemoryAllocator> &resp, struct ifreq *ifr)
-	    ) -> int {
+	auto handle_siocgif = [&arg, &request, &result]<typename ReqSetup, typename RespParse>(
+	                          ReqSetup req_setup, RespParse resp_parse
+	                      ) CAP_REQUIRES(sysdepAllocatorCapability) -> int
+		requires std::is_invocable_r_v<
+	                 void,
+	                 ReqSetup,
+	                 managarm::fs::IfreqRequest<SysdepsAllocator> &,
+	                 struct ifreq *>
+	             && std::is_invocable_r_v<
+	                 int,
+	                 RespParse,
+	                 managarm::fs::IfreqReply<SysdepsAllocator> &,
+	                 struct ifreq *>
+	{
 		if (!arg)
 			return EFAULT;
 
 		auto ifr = reinterpret_cast<struct ifreq *>(arg);
 
-		managarm::posix::NetserverRequest<MemoryAllocator> token_req(getSysdepsAllocator());
-		managarm::fs::IfreqRequest<MemoryAllocator> req(getSysdepsAllocator());
+		managarm::posix::NetserverRequest<SysdepsAllocator> token_req(getSysdepsAllocator());
+		managarm::fs::IfreqRequest<SysdepsAllocator> req(getSysdepsAllocator());
 		req.set_command(request);
 
 		req_setup(req, ifr);
@@ -87,7 +98,7 @@ int sys_ioctl(int fd, unsigned long request, void *arg, int *result) {
 
 		auto preamble = bragi::read_preamble(recv_resp);
 
-		frg::vector<uint8_t, MemoryAllocator> tailBuffer{getSysdepsAllocator()};
+		frg::vector<uint8_t, SysdepsAllocator> tailBuffer{getSysdepsAllocator()};
 		tailBuffer.resize(preamble.tail_size());
 		auto [recv_tail] = exchangeMsgsSync(
 		    offer.descriptor().getHandle(),
@@ -108,7 +119,7 @@ int sys_ioctl(int fd, unsigned long request, void *arg, int *result) {
 		return ret;
 	};
 
-	managarm::fs::IoctlRequest<MemoryAllocator> ioctl_req(getSysdepsAllocator());
+	managarm::fs::IoctlRequest<SysdepsAllocator> ioctl_req(getSysdepsAllocator());
 
 	switch (request) {
 		case FIONBIO: {
@@ -132,7 +143,7 @@ int sys_ioctl(int fd, unsigned long request, void *arg, int *result) {
 			if (!argp)
 				return EINVAL;
 
-			managarm::fs::GenericIoctlRequest<MemoryAllocator> req(getSysdepsAllocator());
+			managarm::fs::GenericIoctlRequest<SysdepsAllocator> req(getSysdepsAllocator());
 			req.set_command(FIONREAD);
 
 			auto [offer, send_ioctl_req, send_req, recv_resp] = exchangeMsgsSync(
@@ -149,7 +160,7 @@ int sys_ioctl(int fd, unsigned long request, void *arg, int *result) {
 			HEL_CHECK(send_req.error());
 			HEL_CHECK(recv_resp.error());
 
-			managarm::fs::GenericIoctlReply<MemoryAllocator> resp(getSysdepsAllocator());
+			managarm::fs::GenericIoctlReply<SysdepsAllocator> resp(getSysdepsAllocator());
 			resp.ParseFromArray(recv_resp.data(), recv_resp.length());
 			if (resp.error() == managarm::fs::Errors::NOT_CONNECTED) {
 				return ENOTCONN;
@@ -162,7 +173,7 @@ int sys_ioctl(int fd, unsigned long request, void *arg, int *result) {
 			}
 		}
 		case FIOCLEX: {
-			managarm::posix::IoctlFioclexRequest<MemoryAllocator> req(getSysdepsAllocator());
+			managarm::posix::IoctlFioclexRequest<SysdepsAllocator> req(getSysdepsAllocator());
 			req.set_fd(fd);
 
 			auto [offer, sendReq, recvResp] = exchangeMsgsSync(
@@ -178,7 +189,7 @@ int sys_ioctl(int fd, unsigned long request, void *arg, int *result) {
 				return EINVAL;
 			HEL_CHECK(recvResp.error());
 
-			managarm::posix::SvrResponse<MemoryAllocator> resp(getSysdepsAllocator());
+			managarm::posix::SvrResponse<SysdepsAllocator> resp(getSysdepsAllocator());
 			resp.ParseFromArray(recvResp.data(), recvResp.length());
 			__ensure(resp.error() == managarm::posix::Errors::SUCCESS);
 			*result = 0;
@@ -187,7 +198,7 @@ int sys_ioctl(int fd, unsigned long request, void *arg, int *result) {
 		case TCGETS: {
 			auto param = reinterpret_cast<struct termios *>(arg);
 
-			managarm::fs::GenericIoctlRequest<MemoryAllocator> req(getSysdepsAllocator());
+			managarm::fs::GenericIoctlRequest<SysdepsAllocator> req(getSysdepsAllocator());
 			req.set_command(request);
 
 			auto [offer, send_ioctl_req, send_req, recv_resp, recv_attrs] = exchangeMsgsSync(
@@ -208,7 +219,7 @@ int sys_ioctl(int fd, unsigned long request, void *arg, int *result) {
 			HEL_CHECK(recv_resp.error());
 			HEL_CHECK(recv_attrs.error());
 
-			managarm::fs::GenericIoctlReply<MemoryAllocator> resp(getSysdepsAllocator());
+			managarm::fs::GenericIoctlReply<SysdepsAllocator> resp(getSysdepsAllocator());
 			resp.ParseFromArray(recv_resp.data(), recv_resp.length());
 			__ensure(resp.error() == managarm::fs::Errors::SUCCESS);
 			__ensure(recv_attrs.actualLength() == sizeof(struct termios));
@@ -218,7 +229,7 @@ int sys_ioctl(int fd, unsigned long request, void *arg, int *result) {
 		case TCSETS: {
 			auto param = reinterpret_cast<struct termios *>(arg);
 
-			managarm::fs::GenericIoctlRequest<MemoryAllocator> req(getSysdepsAllocator());
+			managarm::fs::GenericIoctlRequest<SysdepsAllocator> req(getSysdepsAllocator());
 			req.set_command(request);
 
 			auto [offer, send_ioctl_req, send_req, send_attrs, recv_resp] = exchangeMsgsSync(
@@ -239,7 +250,7 @@ int sys_ioctl(int fd, unsigned long request, void *arg, int *result) {
 			HEL_CHECK(send_attrs.error());
 			HEL_CHECK(recv_resp.error());
 
-			managarm::fs::GenericIoctlReply<MemoryAllocator> resp(getSysdepsAllocator());
+			managarm::fs::GenericIoctlReply<SysdepsAllocator> resp(getSysdepsAllocator());
 			resp.ParseFromArray(recv_resp.data(), recv_resp.length());
 			__ensure(resp.error() == managarm::fs::Errors::SUCCESS);
 			if (result)
@@ -247,7 +258,7 @@ int sys_ioctl(int fd, unsigned long request, void *arg, int *result) {
 			return 0;
 		}
 		case TIOCSCTTY: {
-			managarm::fs::GenericIoctlRequest<MemoryAllocator> req(getSysdepsAllocator());
+			managarm::fs::GenericIoctlRequest<SysdepsAllocator> req(getSysdepsAllocator());
 			req.set_command(request);
 
 			auto [offer, send_ioctl_req, send_req, imbue_creds, recv_resp] = exchangeMsgsSync(
@@ -268,7 +279,7 @@ int sys_ioctl(int fd, unsigned long request, void *arg, int *result) {
 			HEL_CHECK(send_req.error());
 			HEL_CHECK(recv_resp.error());
 
-			managarm::fs::GenericIoctlReply<MemoryAllocator> resp(getSysdepsAllocator());
+			managarm::fs::GenericIoctlReply<SysdepsAllocator> resp(getSysdepsAllocator());
 			resp.ParseFromArray(recv_resp.data(), recv_resp.length());
 			if (resp.error() != managarm::fs::Errors::SUCCESS)
 				return resp.error() | toErrno;
@@ -279,7 +290,7 @@ int sys_ioctl(int fd, unsigned long request, void *arg, int *result) {
 		case TIOCGWINSZ: {
 			auto param = reinterpret_cast<struct winsize *>(arg);
 
-			managarm::fs::GenericIoctlRequest<MemoryAllocator> req(getSysdepsAllocator());
+			managarm::fs::GenericIoctlRequest<SysdepsAllocator> req(getSysdepsAllocator());
 			req.set_command(request);
 
 			auto [offer, send_ioctl_req, send_req, recv_resp] = exchangeMsgsSync(
@@ -300,7 +311,7 @@ int sys_ioctl(int fd, unsigned long request, void *arg, int *result) {
 				return ENOTTY;
 			HEL_CHECK(recv_resp.error());
 
-			managarm::fs::GenericIoctlReply<MemoryAllocator> resp(getSysdepsAllocator());
+			managarm::fs::GenericIoctlReply<SysdepsAllocator> resp(getSysdepsAllocator());
 			resp.ParseFromArray(recv_resp.data(), recv_resp.length());
 			if (resp.error() != managarm::fs::Errors::SUCCESS)
 				return resp.error() | toErrno;
@@ -315,7 +326,7 @@ int sys_ioctl(int fd, unsigned long request, void *arg, int *result) {
 		case TIOCSWINSZ: {
 			auto param = reinterpret_cast<const struct winsize *>(arg);
 
-			managarm::fs::GenericIoctlRequest<MemoryAllocator> req(getSysdepsAllocator());
+			managarm::fs::GenericIoctlRequest<SysdepsAllocator> req(getSysdepsAllocator());
 			req.set_command(request);
 			req.set_pts_width(param->ws_col);
 			req.set_pts_height(param->ws_row);
@@ -337,7 +348,7 @@ int sys_ioctl(int fd, unsigned long request, void *arg, int *result) {
 			HEL_CHECK(send_req.error());
 			HEL_CHECK(recv_resp.error());
 
-			managarm::fs::GenericIoctlReply<MemoryAllocator> resp(getSysdepsAllocator());
+			managarm::fs::GenericIoctlReply<SysdepsAllocator> resp(getSysdepsAllocator());
 			resp.ParseFromArray(recv_resp.data(), recv_resp.length());
 			__ensure(resp.error() == managarm::fs::Errors::SUCCESS);
 
@@ -345,7 +356,7 @@ int sys_ioctl(int fd, unsigned long request, void *arg, int *result) {
 			return 0;
 		}
 		case TIOCNOTTY: {
-			managarm::fs::GenericIoctlRequest<MemoryAllocator> req(getSysdepsAllocator());
+			managarm::fs::GenericIoctlRequest<SysdepsAllocator> req(getSysdepsAllocator());
 			req.set_command(request);
 
 			auto [offer, send_ioctl_req, send_req, imbue_creds, recv_resp] = exchangeMsgsSync(
@@ -366,7 +377,7 @@ int sys_ioctl(int fd, unsigned long request, void *arg, int *result) {
 			HEL_CHECK(send_req.error());
 			HEL_CHECK(recv_resp.error());
 
-			managarm::fs::GenericIoctlReply<MemoryAllocator> resp(getSysdepsAllocator());
+			managarm::fs::GenericIoctlReply<SysdepsAllocator> resp(getSysdepsAllocator());
 			resp.ParseFromArray(recv_resp.data(), recv_resp.length());
 			if (resp.error() != managarm::fs::Errors::SUCCESS)
 				return resp.error() | toErrno;
@@ -377,7 +388,7 @@ int sys_ioctl(int fd, unsigned long request, void *arg, int *result) {
 		case TIOCGPTN: {
 			auto param = reinterpret_cast<int *>(arg);
 
-			managarm::fs::GenericIoctlRequest<MemoryAllocator> req(getSysdepsAllocator());
+			managarm::fs::GenericIoctlRequest<SysdepsAllocator> req(getSysdepsAllocator());
 			req.set_command(request);
 
 			auto [offer, send_ioctl_req, send_req, recv_resp] = exchangeMsgsSync(
@@ -395,7 +406,7 @@ int sys_ioctl(int fd, unsigned long request, void *arg, int *result) {
 			HEL_CHECK(send_req.error());
 			HEL_CHECK(recv_resp.error());
 
-			managarm::fs::GenericIoctlReply<MemoryAllocator> resp(getSysdepsAllocator());
+			managarm::fs::GenericIoctlReply<SysdepsAllocator> resp(getSysdepsAllocator());
 			resp.ParseFromArray(recv_resp.data(), recv_resp.length());
 			__ensure(resp.error() == managarm::fs::Errors::SUCCESS);
 			*param = resp.pts_index();
@@ -404,10 +415,10 @@ int sys_ioctl(int fd, unsigned long request, void *arg, int *result) {
 			return 0;
 		}
 		case TIOCGPGRP: {
-			managarm::fs::GenericIoctlRequest<MemoryAllocator> req(getSysdepsAllocator());
+			managarm::fs::GenericIoctlRequest<SysdepsAllocator> req(getSysdepsAllocator());
 			req.set_command(request);
 
-			frg::string<MemoryAllocator> ser(getSysdepsAllocator());
+			frg::string<SysdepsAllocator> ser(getSysdepsAllocator());
 			req.SerializeToString(&ser);
 
 			auto [offer, send_ioctl_req, send_req, imbue_creds, recv_resp] = exchangeMsgsSync(
@@ -428,7 +439,7 @@ int sys_ioctl(int fd, unsigned long request, void *arg, int *result) {
 			HEL_CHECK(imbue_creds.error());
 			HEL_CHECK(recv_resp.error());
 
-			managarm::fs::GenericIoctlReply<MemoryAllocator> resp(getSysdepsAllocator());
+			managarm::fs::GenericIoctlReply<SysdepsAllocator> resp(getSysdepsAllocator());
 			resp.ParseFromArray(recv_resp.data(), recv_resp.length());
 			if (resp.error() != managarm::fs::Errors::SUCCESS)
 				return resp.error() | toErrno;
@@ -439,11 +450,11 @@ int sys_ioctl(int fd, unsigned long request, void *arg, int *result) {
 		case TIOCSPGRP: {
 			auto param = reinterpret_cast<int *>(arg);
 
-			managarm::fs::GenericIoctlRequest<MemoryAllocator> req(getSysdepsAllocator());
+			managarm::fs::GenericIoctlRequest<SysdepsAllocator> req(getSysdepsAllocator());
 			req.set_command(request);
 			req.set_pgid(*param);
 
-			frg::string<MemoryAllocator> ser(getSysdepsAllocator());
+			frg::string<SysdepsAllocator> ser(getSysdepsAllocator());
 			req.SerializeToString(&ser);
 
 			auto [offer, send_ioctl_req, send_req, imbue_creds, recv_resp] = exchangeMsgsSync(
@@ -464,7 +475,7 @@ int sys_ioctl(int fd, unsigned long request, void *arg, int *result) {
 			HEL_CHECK(imbue_creds.error());
 			HEL_CHECK(recv_resp.error());
 
-			managarm::fs::GenericIoctlReply<MemoryAllocator> resp(getSysdepsAllocator());
+			managarm::fs::GenericIoctlReply<SysdepsAllocator> resp(getSysdepsAllocator());
 			resp.ParseFromArray(recv_resp.data(), recv_resp.length());
 			if (resp.error() != managarm::fs::Errors::SUCCESS)
 				return resp.error() | toErrno;
@@ -473,10 +484,10 @@ int sys_ioctl(int fd, unsigned long request, void *arg, int *result) {
 			return 0;
 		}
 		case TIOCGSID: {
-			managarm::fs::GenericIoctlRequest<MemoryAllocator> req(getSysdepsAllocator());
+			managarm::fs::GenericIoctlRequest<SysdepsAllocator> req(getSysdepsAllocator());
 			req.set_command(request);
 
-			frg::string<MemoryAllocator> ser(getSysdepsAllocator());
+			frg::string<SysdepsAllocator> ser(getSysdepsAllocator());
 			req.SerializeToString(&ser);
 
 			auto [offer, send_ioctl_req, send_req, imbue_creds, recv_resp] = exchangeMsgsSync(
@@ -501,7 +512,7 @@ int sys_ioctl(int fd, unsigned long request, void *arg, int *result) {
 			HEL_CHECK(imbue_creds.error());
 			HEL_CHECK(recv_resp.error());
 
-			managarm::fs::GenericIoctlReply<MemoryAllocator> resp(getSysdepsAllocator());
+			managarm::fs::GenericIoctlReply<SysdepsAllocator> resp(getSysdepsAllocator());
 			resp.ParseFromArray(recv_resp.data(), recv_resp.length());
 			if (resp.error() == managarm::fs::Errors::NOT_A_TERMINAL) {
 				return ENOTTY;
@@ -512,10 +523,10 @@ int sys_ioctl(int fd, unsigned long request, void *arg, int *result) {
 			return 0;
 		}
 		case CDROM_GET_CAPABILITY: {
-			managarm::fs::GenericIoctlRequest<MemoryAllocator> req(getSysdepsAllocator());
+			managarm::fs::GenericIoctlRequest<SysdepsAllocator> req(getSysdepsAllocator());
 			req.set_command(request);
 
-			frg::string<MemoryAllocator> ser(getSysdepsAllocator());
+			frg::string<SysdepsAllocator> ser(getSysdepsAllocator());
 			req.SerializeToString(&ser);
 
 			auto [offer, send_ioctl_req, send_req, recv_resp] = exchangeMsgsSync(
@@ -536,7 +547,7 @@ int sys_ioctl(int fd, unsigned long request, void *arg, int *result) {
 			HEL_CHECK(send_req.error());
 			HEL_CHECK(recv_resp.error());
 
-			managarm::fs::GenericIoctlReply<MemoryAllocator> resp(getSysdepsAllocator());
+			managarm::fs::GenericIoctlReply<SysdepsAllocator> resp(getSysdepsAllocator());
 			resp.ParseFromArray(recv_resp.data(), recv_resp.length());
 			if (resp.error() == managarm::fs::Errors::NOT_A_TERMINAL) {
 				return ENOTTY;
@@ -567,7 +578,7 @@ int sys_ioctl(int fd, unsigned long request, void *arg, int *result) {
 		memset(arg, 0, sizeof(struct input_id));
 		auto param = reinterpret_cast<struct input_id *>(arg);
 
-		managarm::fs::EvioGetIdRequest<MemoryAllocator> req(getSysdepsAllocator());
+		managarm::fs::EvioGetIdRequest<SysdepsAllocator> req(getSysdepsAllocator());
 
 		auto [offer, send_ioctl_req, send_req, recv_resp] = exchangeMsgsSync(
 		    handle,
@@ -597,7 +608,7 @@ int sys_ioctl(int fd, unsigned long request, void *arg, int *result) {
 		*result = 0;
 		return 0;
 	} else if (_IOC_TYPE(request) == 'E' && _IOC_NR(request) == _IOC_NR(EVIOCGNAME(0))) {
-		managarm::fs::EvioGetNameRequest<MemoryAllocator> req(getSysdepsAllocator());
+		managarm::fs::EvioGetNameRequest<SysdepsAllocator> req(getSysdepsAllocator());
 
 		auto [offer, send_ioctl_req, send_req, recv_resp] = exchangeMsgsSync(
 		    handle,
@@ -617,7 +628,7 @@ int sys_ioctl(int fd, unsigned long request, void *arg, int *result) {
 		auto preamble = bragi::read_preamble(recv_resp);
 		__ensure(!preamble.error());
 
-		frg::vector<uint8_t, MemoryAllocator> tailBuffer{getSysdepsAllocator()};
+		frg::vector<uint8_t, SysdepsAllocator> tailBuffer{getSysdepsAllocator()};
 		tailBuffer.resize(preamble.tail_size());
 		auto [recv_tail] = exchangeMsgsSync(
 		    conversation.getHandle(), helix_ng::recvBuffer(tailBuffer.data(), tailBuffer.size())
@@ -637,6 +648,10 @@ int sys_ioctl(int fd, unsigned long request, void *arg, int *result) {
 		return 0;
 	} else if (_IOC_TYPE(request) == 'E' && _IOC_NR(request) == _IOC_NR(EVIOCGRAB)) {
 		mlibc::infoLogger() << "mlibc: EVIOCGRAB is a no-op" << frg::endlog;
+		*result = 0;
+		return 0;
+	} else if (_IOC_TYPE(request) == 'E' && _IOC_NR(request) == _IOC_NR(EVIOCREVOKE)) {
+		mlibc::infoLogger() << "mlibc: EVIOCREVOKE is a no-op" << frg::endlog;
 		*result = 0;
 		return 0;
 	} else if (_IOC_TYPE(request) == 'E' && _IOC_NR(request) == _IOC_NR(EVIOCGPHYS(0))) {
@@ -682,7 +697,7 @@ int sys_ioctl(int fd, unsigned long request, void *arg, int *result) {
 		// the number of entries the buffer can hold
 		auto entries = (bytes / sizeof(int32_t)) - 1;
 
-		managarm::fs::EvioGetMultitouchSlotsRequest<MemoryAllocator> req(getSysdepsAllocator());
+		managarm::fs::EvioGetMultitouchSlotsRequest<SysdepsAllocator> req(getSysdepsAllocator());
 		req.set_code(*reinterpret_cast<uint32_t *>(arg));
 
 		auto [offer, send_ioctl_req, send_req, recv_resp] = exchangeMsgsSync(
@@ -703,7 +718,7 @@ int sys_ioctl(int fd, unsigned long request, void *arg, int *result) {
 		auto preamble = bragi::read_preamble(recv_resp);
 		__ensure(!preamble.error());
 
-		frg::vector<uint8_t, MemoryAllocator> tailBuffer{getSysdepsAllocator()};
+		frg::vector<uint8_t, SysdepsAllocator> tailBuffer{getSysdepsAllocator()};
 		tailBuffer.resize(preamble.tail_size());
 		auto [recv_tail] = exchangeMsgsSync(
 		    conversation.getHandle(), helix_ng::recvBuffer(tailBuffer.data(), tailBuffer.size())
@@ -749,7 +764,7 @@ int sys_ioctl(int fd, unsigned long request, void *arg, int *result) {
 			// TODO: Check with the Linux ABI if we have to do this.
 			memset(arg, 0, _IOC_SIZE(request));
 
-			managarm::fs::GenericIoctlRequest<MemoryAllocator> req(getSysdepsAllocator());
+			managarm::fs::GenericIoctlRequest<SysdepsAllocator> req(getSysdepsAllocator());
 			req.set_command(EVIOCGBIT(0, 0));
 			req.set_size(_IOC_SIZE(request));
 
@@ -771,7 +786,7 @@ int sys_ioctl(int fd, unsigned long request, void *arg, int *result) {
 			HEL_CHECK(recv_resp.error());
 			HEL_CHECK(recv_data.error());
 
-			managarm::fs::GenericIoctlReply<MemoryAllocator> resp(getSysdepsAllocator());
+			managarm::fs::GenericIoctlReply<SysdepsAllocator> resp(getSysdepsAllocator());
 			resp.ParseFromArray(recv_resp.data(), recv_resp.length());
 			__ensure(resp.error() == managarm::fs::Errors::SUCCESS);
 			*result = recv_data.actualLength();
@@ -780,7 +795,7 @@ int sys_ioctl(int fd, unsigned long request, void *arg, int *result) {
 			// TODO: Check with the Linux ABI if we have to do this.
 			memset(arg, 0, _IOC_SIZE(request));
 
-			managarm::fs::GenericIoctlRequest<MemoryAllocator> req(getSysdepsAllocator());
+			managarm::fs::GenericIoctlRequest<SysdepsAllocator> req(getSysdepsAllocator());
 			req.set_command(EVIOCGBIT(1, 0));
 			req.set_input_type(type);
 			req.set_size(_IOC_SIZE(request));
@@ -803,7 +818,7 @@ int sys_ioctl(int fd, unsigned long request, void *arg, int *result) {
 			HEL_CHECK(recv_resp.error());
 			HEL_CHECK(recv_data.error());
 
-			managarm::fs::GenericIoctlReply<MemoryAllocator> resp(getSysdepsAllocator());
+			managarm::fs::GenericIoctlReply<SysdepsAllocator> resp(getSysdepsAllocator());
 			resp.ParseFromArray(recv_resp.data(), recv_resp.length());
 			__ensure(resp.error() == managarm::fs::Errors::SUCCESS);
 			*result = recv_data.actualLength();
@@ -812,7 +827,7 @@ int sys_ioctl(int fd, unsigned long request, void *arg, int *result) {
 	} else if (_IOC_TYPE(request) == 'E' && _IOC_NR(request) == _IOC_NR(EVIOCSCLOCKID)) {
 		auto param = reinterpret_cast<int *>(arg);
 
-		managarm::fs::GenericIoctlRequest<MemoryAllocator> req(getSysdepsAllocator());
+		managarm::fs::GenericIoctlRequest<SysdepsAllocator> req(getSysdepsAllocator());
 		req.set_command(request);
 		req.set_input_clock(*param);
 
@@ -832,7 +847,7 @@ int sys_ioctl(int fd, unsigned long request, void *arg, int *result) {
 		HEL_CHECK(send_req.error());
 		HEL_CHECK(recv_resp.error());
 
-		managarm::fs::GenericIoctlReply<MemoryAllocator> resp(getSysdepsAllocator());
+		managarm::fs::GenericIoctlReply<SysdepsAllocator> resp(getSysdepsAllocator());
 		resp.ParseFromArray(recv_resp.data(), recv_resp.length());
 		__ensure(resp.error() == managarm::fs::Errors::SUCCESS);
 		*result = resp.result();
@@ -842,7 +857,7 @@ int sys_ioctl(int fd, unsigned long request, void *arg, int *result) {
 		auto param = reinterpret_cast<struct input_absinfo *>(arg);
 
 		auto type = _IOC_NR(request) - _IOC_NR(EVIOCGABS(0));
-		managarm::fs::GenericIoctlRequest<MemoryAllocator> req(getSysdepsAllocator());
+		managarm::fs::GenericIoctlRequest<SysdepsAllocator> req(getSysdepsAllocator());
 		req.set_command(EVIOCGABS(0));
 		req.set_input_type(type);
 
@@ -862,7 +877,7 @@ int sys_ioctl(int fd, unsigned long request, void *arg, int *result) {
 		HEL_CHECK(send_req.error());
 		HEL_CHECK(recv_resp.error());
 
-		managarm::fs::GenericIoctlReply<MemoryAllocator> resp(getSysdepsAllocator());
+		managarm::fs::GenericIoctlReply<SysdepsAllocator> resp(getSysdepsAllocator());
 		resp.ParseFromArray(recv_resp.data(), recv_resp.length());
 		__ensure(resp.error() == managarm::fs::Errors::SUCCESS);
 
@@ -896,25 +911,174 @@ int sys_ioctl(int fd, unsigned long request, void *arg, int *result) {
 
 		*result = 0;
 		return 0;
+	} else if (request == KDGKBMODE) {
+		auto param = reinterpret_cast<long *>(arg);
+		mlibc::infoLogger() << "\e[35mmlibc: KD_GKBMODE(" << frg::hex_fmt(param) << ") is a no-op"
+		                    ", and hardcodes K_RAW" << frg::endlog;
+
+		*param = K_RAW;
+		*result = 0;
+		return 0;
+	} else if (request == VT_GETMODE) {
+		managarm::fs::GenericIoctlRequest<SysdepsAllocator> req(getSysdepsAllocator());
+		req.set_command(request);
+
+		auto [offer, send_ioctl_req, imbue_creds, send_req, recv_resp] = exchangeMsgsSync(
+			handle,
+			helix_ng::offer(
+				helix_ng::sendBragiHeadOnly(ioctl_req, getSysdepsAllocator()),
+				helix_ng::sendBragiHeadOnly(req, getSysdepsAllocator()),
+				helix_ng::imbueCredentials(),
+				helix_ng::recvInline()
+			)
+		);
+		HEL_CHECK(offer.error());
+		HEL_CHECK(send_ioctl_req.error());
+		if (send_req.error() == kHelErrDismissed)
+			return EINVAL;
+		HEL_CHECK(imbue_creds.error());
+		HEL_CHECK(send_req.error());
+		HEL_CHECK(recv_resp.error());
+
+		auto param = reinterpret_cast<struct vt_mode *>(arg);
+
+		managarm::fs::VtGetModeResponse<SysdepsAllocator> resp(getSysdepsAllocator());
+		resp.ParseFromArray(recv_resp.data(), recv_resp.length());
+		__ensure(resp.error() == managarm::fs::Errors::SUCCESS);
+
+		param->mode = resp.vt_mode();
+		param->waitv = resp.vt_waitv();
+		param->relsig = resp.vt_relsig();
+		param->acqsig = resp.vt_acqsig();
+		param->frsig = resp.vt_frsig();
+
+		*result = 0;
+		return 0;
+	} else if(request == VT_OPENQRY) {
+		managarm::fs::GenericIoctlRequest<SysdepsAllocator> req(getSysdepsAllocator());
+		req.set_command(request);
+
+		auto [offer, send_ioctl_req, imbue_creds, send_req, recv_resp] = exchangeMsgsSync(
+			handle,
+			helix_ng::offer(
+				helix_ng::sendBragiHeadOnly(ioctl_req, getSysdepsAllocator()),
+				helix_ng::sendBragiHeadOnly(req, getSysdepsAllocator()),
+				helix_ng::imbueCredentials(),
+				helix_ng::recvInline()
+			)
+		);
+		HEL_CHECK(offer.error());
+		HEL_CHECK(send_ioctl_req.error());
+		if (send_req.error() == kHelErrDismissed)
+			return EINVAL;
+		HEL_CHECK(imbue_creds.error());
+		HEL_CHECK(send_req.error());
+		HEL_CHECK(recv_resp.error());
+
+		
+		managarm::fs::VtOpenqryResponse<SysdepsAllocator> resp(getSysdepsAllocator());
+		resp.ParseFromArray(recv_resp.data(), recv_resp.length());
+		__ensure(resp.error() == managarm::fs::Errors::SUCCESS);
+
+		auto param = reinterpret_cast<int *>(arg);
+		*param = resp.vt_nr();
+
+		*result = 0;
+		return 0;
 	} else if (request == VT_SETMODE) {
-		// auto param = reinterpret_cast<struct vt_mode *>(arg);
-		mlibc::infoLogger() << "\e[35mmlibc: VT_SETMODE is a no-op" << frg::endlog;
+		managarm::fs::VtSetModeRequest<SysdepsAllocator> req(getSysdepsAllocator());
+		auto param = reinterpret_cast<struct vt_mode *>(arg);
+		req.set_vt_mode(param->mode);
+		req.set_vt_waitv(param->waitv);
+		req.set_vt_relsig(param->relsig);
+		req.set_vt_acqsig(param->acqsig);
+		req.set_vt_frsig(param->frsig);
+
+		auto [offer, send_ioctl_req, imbue_creds, send_req, recv_resp] = exchangeMsgsSync(
+			handle,
+			helix_ng::offer(
+				helix_ng::sendBragiHeadOnly(ioctl_req, getSysdepsAllocator()),
+				helix_ng::sendBragiHeadOnly(req, getSysdepsAllocator()),
+				helix_ng::imbueCredentials(),
+				helix_ng::recvInline()
+			)
+		);
+		HEL_CHECK(offer.error());
+		HEL_CHECK(send_ioctl_req.error());
+		if (send_req.error() == kHelErrDismissed)
+			return EINVAL;
+		HEL_CHECK(imbue_creds.error());
+		HEL_CHECK(send_req.error());
+		HEL_CHECK(recv_resp.error());
+
+		managarm::fs::VtSetModeResponse<SysdepsAllocator> resp(getSysdepsAllocator());
+		resp.ParseFromArray(recv_resp.data(), recv_resp.length());
+		__ensure(resp.error() == managarm::fs::Errors::SUCCESS);
 
 		*result = 0;
 		return 0;
 	} else if (request == VT_GETSTATE) {
+		managarm::fs::GenericIoctlRequest<SysdepsAllocator> req(getSysdepsAllocator());
+		req.set_command(request);
+		
+		auto [offer, send_ioctl_req, imbue_creds, send_req, recv_resp] = exchangeMsgsSync(
+			handle,
+			helix_ng::offer(
+				helix_ng::sendBragiHeadOnly(ioctl_req, getSysdepsAllocator()),
+				helix_ng::sendBragiHeadOnly(req, getSysdepsAllocator()),
+				helix_ng::imbueCredentials(),
+				helix_ng::recvInline()
+			)
+		);
+		HEL_CHECK(offer.error());
+		HEL_CHECK(send_ioctl_req.error());
+		if (send_req.error() == kHelErrDismissed)
+			return EINVAL;
+		HEL_CHECK(imbue_creds.error());
+		HEL_CHECK(send_req.error());
+		HEL_CHECK(recv_resp.error());
+
 		auto param = reinterpret_cast<struct vt_stat *>(arg);
 
-		param->v_active = 0;
-		param->v_signal = 0;
-		param->v_state = 0;
+		managarm::fs::VtGetStateResponse<SysdepsAllocator> resp(getSysdepsAllocator());
+		resp.ParseFromArray(recv_resp.data(), recv_resp.length());
+		__ensure(resp.error() == managarm::fs::Errors::SUCCESS);
 
-		mlibc::infoLogger() << "\e[35mmlibc: VT_GETSTATE is a no-op" << frg::endlog;
+		param->v_active = resp.vt_nr();
+		param->v_signal = resp.vt_relsig(); // Intended, reuse an existing field to avoid adding a new one to the protocol.
+		param->v_state = resp.vt_state();
 
 		*result = 0;
 		return 0;
 	} else if (request == VT_ACTIVATE || request == VT_WAITACTIVE) {
-		mlibc::infoLogger() << "\e[35mmlibc: VT_ACTIVATE/VT_WAITACTIVE are no-ops" << frg::endlog;
+		managarm::fs::VtActivateRequest<SysdepsAllocator> req(getSysdepsAllocator());
+		req.set_vt_mode(reinterpret_cast<long>(arg));
+
+		auto [offer, send_ioctl_req, imbue_creds, send_req, recv_resp] = exchangeMsgsSync(
+			handle,
+			helix_ng::offer(
+				helix_ng::sendBragiHeadOnly(ioctl_req, getSysdepsAllocator()),
+				helix_ng::sendBragiHeadOnly(req, getSysdepsAllocator()),
+				helix_ng::imbueCredentials(),
+				helix_ng::recvInline()
+			)
+		);
+		HEL_CHECK(offer.error());
+		HEL_CHECK(send_ioctl_req.error());
+		if (send_req.error() == kHelErrDismissed)
+			return EINVAL;
+		HEL_CHECK(imbue_creds.error());
+		HEL_CHECK(send_req.error());
+		HEL_CHECK(recv_resp.error());
+
+		managarm::fs::VtActivateResponse<SysdepsAllocator> resp(getSysdepsAllocator());
+		resp.ParseFromArray(recv_resp.data(), recv_resp.length());
+		__ensure(resp.error() == managarm::fs::Errors::SUCCESS);
+
+		*result = 0;
+		return 0;
+	} else if (request == VT_RELDISP) {
+		mlibc::infoLogger() << "\e[35mmlibc: VT_RELDISP is a no-op" << frg::endlog;
 		*result = 0;
 		return 0;
 	} else if (request == TIOCSPTLCK) {
@@ -924,8 +1088,8 @@ int sys_ioctl(int fd, unsigned long request, void *arg, int *result) {
 		return 0;
 	} else if (request == SIOCGIFNAME) {
 		return handle_siocgif(
-		    [](auto req, auto ifr) { req.set_index(ifr->ifr_ifindex); },
-		    [](auto resp, auto ifr) {
+		    [](auto &req, struct ifreq *ifr) CAP_REQUIRES(sysdepAllocatorCapability) { req.set_index(ifr->ifr_ifindex); },
+		    [](auto &resp, struct ifreq *ifr) CAP_REQUIRES(sysdepAllocatorCapability) {
 			    if (resp.error() != managarm::fs::Errors::SUCCESS)
 				    return EINVAL;
 			    strncpy(ifr->ifr_name, resp.name().data(), IFNAMSIZ);
@@ -938,8 +1102,8 @@ int sys_ioctl(int fd, unsigned long request, void *arg, int *result) {
 
 		auto ifc = reinterpret_cast<struct ifconf *>(arg);
 
-		managarm::posix::NetserverRequest<MemoryAllocator> token_req(getSysdepsAllocator());
-		managarm::fs::IfreqRequest<MemoryAllocator> req(getSysdepsAllocator());
+		managarm::posix::NetserverRequest<SysdepsAllocator> token_req(getSysdepsAllocator());
+		managarm::fs::IfreqRequest<SysdepsAllocator> req(getSysdepsAllocator());
 		req.set_command(request);
 
 		auto [offer, send_token_req, send_req, send_tail, recv_resp] = exchangeMsgsSync(
@@ -963,7 +1127,7 @@ int sys_ioctl(int fd, unsigned long request, void *arg, int *result) {
 		auto preamble = bragi::read_preamble(recv_resp);
 		__ensure(!preamble.error());
 
-		frg::vector<uint8_t, MemoryAllocator> tailBuffer{getSysdepsAllocator()};
+		frg::vector<uint8_t, SysdepsAllocator> tailBuffer{getSysdepsAllocator()};
 		tailBuffer.resize(preamble.tail_size());
 		auto [recv_tail] = exchangeMsgsSync(
 		    conversation.getHandle(), helix_ng::recvBuffer(tailBuffer.data(), tailBuffer.size())
@@ -1003,10 +1167,10 @@ int sys_ioctl(int fd, unsigned long request, void *arg, int *result) {
 		return 0;
 	} else if (request == SIOCGIFNETMASK) {
 		return handle_siocgif(
-		    [](auto req, auto ifr) {
-			    req.set_name(frg::string<MemoryAllocator>{ifr->ifr_name, getSysdepsAllocator()});
+		    [](auto &req, struct ifreq *ifr) CAP_REQUIRES(sysdepAllocatorCapability) {
+			    req.set_name(frg::string<SysdepsAllocator>{ifr->ifr_name, getSysdepsAllocator()});
 		    },
-		    [](auto resp, auto ifr) {
+		    [](auto &resp, struct ifreq *ifr) CAP_REQUIRES(sysdepAllocatorCapability) {
 			    if (resp.error() != managarm::fs::Errors::SUCCESS)
 				    return EINVAL;
 
@@ -1020,10 +1184,10 @@ int sys_ioctl(int fd, unsigned long request, void *arg, int *result) {
 		);
 	} else if (request == SIOCGIFINDEX) {
 		return handle_siocgif(
-		    [](auto req, auto ifr) {
-			    req.set_name(frg::string<MemoryAllocator>{ifr->ifr_name, getSysdepsAllocator()});
+		    [](auto &req, struct ifreq *ifr) CAP_REQUIRES(sysdepAllocatorCapability) {
+			    req.set_name(frg::string<SysdepsAllocator>{ifr->ifr_name, getSysdepsAllocator()});
 		    },
-		    [](auto resp, auto ifr) {
+		    [](auto &resp, struct ifreq *ifr) CAP_REQUIRES(sysdepAllocatorCapability) {
 			    if (resp.error() != managarm::fs::Errors::SUCCESS)
 				    return EINVAL;
 			    ifr->ifr_ifindex = resp.index();
@@ -1032,10 +1196,10 @@ int sys_ioctl(int fd, unsigned long request, void *arg, int *result) {
 		);
 	} else if (request == SIOCGIFFLAGS) {
 		return handle_siocgif(
-		    [](auto req, auto ifr) {
-			    req.set_name(frg::string<MemoryAllocator>{ifr->ifr_name, getSysdepsAllocator()});
+		    [](auto &req, struct ifreq *ifr) CAP_REQUIRES(sysdepAllocatorCapability) {
+			    req.set_name(frg::string<SysdepsAllocator>{ifr->ifr_name, getSysdepsAllocator()});
 		    },
-		    [](auto resp, auto ifr) {
+		    [](auto &resp, struct ifreq *ifr) CAP_REQUIRES(sysdepAllocatorCapability) {
 			    if (resp.error() != managarm::fs::Errors::SUCCESS)
 				    return EINVAL;
 			    ifr->ifr_flags = resp.flags();
@@ -1044,10 +1208,10 @@ int sys_ioctl(int fd, unsigned long request, void *arg, int *result) {
 		);
 	} else if (request == SIOCGIFADDR) {
 		return handle_siocgif(
-		    [](auto req, auto ifr) {
-			    req.set_name(frg::string<MemoryAllocator>{ifr->ifr_name, getSysdepsAllocator()});
+		    [](auto &req, struct ifreq *ifr) CAP_REQUIRES(sysdepAllocatorCapability) {
+			    req.set_name(frg::string<SysdepsAllocator>{ifr->ifr_name, getSysdepsAllocator()});
 		    },
-		    [](auto resp, auto ifr) {
+		    [](auto &resp, struct ifreq *ifr) CAP_REQUIRES(sysdepAllocatorCapability) {
 			    if (resp.error() != managarm::fs::Errors::SUCCESS)
 				    return EINVAL;
 
@@ -1061,10 +1225,10 @@ int sys_ioctl(int fd, unsigned long request, void *arg, int *result) {
 		);
 	} else if (request == SIOCGIFMTU) {
 		return handle_siocgif(
-		    [](auto req, auto ifr) {
-			    req.set_name(frg::string<MemoryAllocator>{ifr->ifr_name, getSysdepsAllocator()});
+		    [](auto &req, struct ifreq *ifr) CAP_REQUIRES(sysdepAllocatorCapability) {
+			    req.set_name(frg::string<SysdepsAllocator>{ifr->ifr_name, getSysdepsAllocator()});
 		    },
-		    [](auto resp, auto ifr) {
+		    [](auto &resp, struct ifreq *ifr) CAP_REQUIRES(sysdepAllocatorCapability) {
 			    if (resp.error() != managarm::fs::Errors::SUCCESS)
 				    return EINVAL;
 
@@ -1075,10 +1239,10 @@ int sys_ioctl(int fd, unsigned long request, void *arg, int *result) {
 		);
 	} else if (request == SIOCGIFBRDADDR) {
 		return handle_siocgif(
-		    [](auto req, auto ifr) {
-			    req.set_name(frg::string<MemoryAllocator>{ifr->ifr_name, getSysdepsAllocator()});
+		    [](auto &req, struct ifreq *ifr) CAP_REQUIRES(sysdepAllocatorCapability) {
+			    req.set_name(frg::string<SysdepsAllocator>{ifr->ifr_name, getSysdepsAllocator()});
 		    },
-		    [](auto resp, auto ifr) {
+		    [](auto &resp, struct ifreq *ifr) CAP_REQUIRES(sysdepAllocatorCapability) {
 			    if (resp.error() != managarm::fs::Errors::SUCCESS)
 				    return EINVAL;
 
@@ -1092,10 +1256,10 @@ int sys_ioctl(int fd, unsigned long request, void *arg, int *result) {
 		);
 	} else if (request == SIOCGIFHWADDR) {
 		return handle_siocgif(
-		    [](auto req, auto ifr) {
-			    req.set_name(frg::string<MemoryAllocator>{ifr->ifr_name, getSysdepsAllocator()});
+		    [](auto &req, struct ifreq *ifr) CAP_REQUIRES(sysdepAllocatorCapability) {
+			    req.set_name(frg::string<SysdepsAllocator>{ifr->ifr_name, getSysdepsAllocator()});
 		    },
-		    [](auto resp, auto ifr) {
+		    [](auto &resp, struct ifreq *ifr) CAP_REQUIRES(sysdepAllocatorCapability) {
 			    if (resp.error() != managarm::fs::Errors::SUCCESS)
 				    return EINVAL;
 
@@ -1110,7 +1274,7 @@ int sys_ioctl(int fd, unsigned long request, void *arg, int *result) {
 	} else if (request == IOCTL_WDM_MAX_COMMAND) {
 		auto param = reinterpret_cast<int *>(arg);
 
-		managarm::fs::GenericIoctlRequest<MemoryAllocator> req(getSysdepsAllocator());
+		managarm::fs::GenericIoctlRequest<SysdepsAllocator> req(getSysdepsAllocator());
 		req.set_command(request);
 
 		auto [offer, send_ioctl_req, send_req, recv_resp] = exchangeMsgsSync(
@@ -1127,14 +1291,14 @@ int sys_ioctl(int fd, unsigned long request, void *arg, int *result) {
 		HEL_CHECK(send_req.error());
 		HEL_CHECK(recv_resp.error());
 
-		managarm::fs::GenericIoctlReply<MemoryAllocator> resp(getSysdepsAllocator());
+		managarm::fs::GenericIoctlReply<SysdepsAllocator> resp(getSysdepsAllocator());
 		resp.ParseFromArray(recv_resp.data(), recv_resp.length());
 		__ensure(resp.error() == managarm::fs::Errors::SUCCESS);
 		*result = resp.result();
 		*param = resp.size();
 		return 0;
 	} else if (request == NVME_IOCTL_ID) {
-		managarm::fs::GenericIoctlRequest<MemoryAllocator> req(getSysdepsAllocator());
+		managarm::fs::GenericIoctlRequest<SysdepsAllocator> req(getSysdepsAllocator());
 		req.set_command(request);
 
 		auto [offer, send_ioctl_req, send_req, recv_resp] = exchangeMsgsSync(
@@ -1151,7 +1315,7 @@ int sys_ioctl(int fd, unsigned long request, void *arg, int *result) {
 		HEL_CHECK(send_req.error());
 		HEL_CHECK(recv_resp.error());
 
-		managarm::fs::GenericIoctlReply<MemoryAllocator> resp(getSysdepsAllocator());
+		managarm::fs::GenericIoctlReply<SysdepsAllocator> resp(getSysdepsAllocator());
 		resp.ParseFromArray(recv_resp.data(), recv_resp.length());
 		__ensure(resp.error() == managarm::fs::Errors::SUCCESS);
 		*result = resp.result();
@@ -1159,7 +1323,7 @@ int sys_ioctl(int fd, unsigned long request, void *arg, int *result) {
 	} else if (request == NVME_IOCTL_ADMIN_CMD) {
 		auto param = reinterpret_cast<struct nvme_admin_cmd *>(arg);
 
-		managarm::fs::GenericIoctlRequest<MemoryAllocator> req(getSysdepsAllocator());
+		managarm::fs::GenericIoctlRequest<SysdepsAllocator> req(getSysdepsAllocator());
 		req.set_command(request);
 
 		auto [offer, send_ioctl_req, send_req, send_buffer, send_data, recv_resp, recv_data] =
@@ -1183,7 +1347,7 @@ int sys_ioctl(int fd, unsigned long request, void *arg, int *result) {
 		HEL_CHECK(recv_resp.error());
 		HEL_CHECK(recv_data.error());
 
-		managarm::fs::GenericIoctlReply<MemoryAllocator> resp(getSysdepsAllocator());
+		managarm::fs::GenericIoctlReply<SysdepsAllocator> resp(getSysdepsAllocator());
 		resp.ParseFromArray(recv_resp.data(), recv_resp.length());
 		__ensure(resp.error() == managarm::fs::Errors::SUCCESS);
 		*result = resp.result();
@@ -1194,7 +1358,7 @@ int sys_ioctl(int fd, unsigned long request, void *arg, int *result) {
 			return EFAULT;
 		auto param = reinterpret_cast<uint64_t *>(arg);
 
-		managarm::fs::GenericIoctlRequest<MemoryAllocator> req(getSysdepsAllocator());
+		managarm::fs::GenericIoctlRequest<SysdepsAllocator> req(getSysdepsAllocator());
 		req.set_command(request);
 		req.set_ticks(*param);
 
@@ -1212,7 +1376,7 @@ int sys_ioctl(int fd, unsigned long request, void *arg, int *result) {
 		HEL_CHECK(send_req.error());
 		HEL_CHECK(recv_resp.error());
 
-		managarm::fs::GenericIoctlReply<MemoryAllocator> resp(getSysdepsAllocator());
+		managarm::fs::GenericIoctlReply<SysdepsAllocator> resp(getSysdepsAllocator());
 		resp.ParseFromArray(recv_resp.data(), recv_resp.length());
 		*result = 0;
 		return 0;
