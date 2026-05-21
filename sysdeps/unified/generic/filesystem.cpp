@@ -352,12 +352,17 @@ int Sysdeps<Dup2>::operator()(int fd, int flags, int newfd){
 }
 
 int Sysdeps<ReadEntries>::operator()(int handle, void *buffer, size_t max_size, size_t *bytes_read) {
-    long ret = syscall(SYS_GETDENTS64, handle, buffer, max_size);
-    if(ret < 0)
-        return -ret;
+	long ret = syscall(SYS_GETDENTS64, handle, buffer, max_size);
+	if(ret == -EBADF) {
+		errno = EBADF;
+		*bytes_read = 0;
+		return 0;
+	}
+	if(ret < 0)
+		return -ret;
 
-    *bytes_read = ret;
-    return 0;
+	*bytes_read = ret;
+	return 0;
 }
 
 int Sysdeps<Mount>::operator()(const char *source, const char *target, const char *fstype, unsigned long flags, const void *data)

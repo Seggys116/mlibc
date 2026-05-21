@@ -69,6 +69,10 @@ int Sysdeps<PrepareStack>::operator()(
 	uintptr_t *sp =
 	    reinterpret_cast<uintptr_t *>(reinterpret_cast<uintptr_t>(usable_base) + *stack_size);
 
+	auto *thread_tcb = reinterpret_cast<Tcb *>(tcb);
+	__atomic_store_n(&thread_tcb->didExit, 0, __ATOMIC_RELEASE);
+	__atomic_store_n(&thread_tcb->tid, 0, __ATOMIC_RELEASE);
+
 	*--sp = reinterpret_cast<uintptr_t>(tcb);
 	*--sp = reinterpret_cast<uintptr_t>(user_arg);
 	*--sp = reinterpret_cast<uintptr_t>(entry);

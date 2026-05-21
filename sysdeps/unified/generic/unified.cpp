@@ -1,3 +1,5 @@
+#define MLIBC_UNIFIED_IMPLEMENTING_ABI_OVERRIDES
+
 #include <unified/syscall.h>
 #include <stddef.h>
 #include <stdarg.h>
@@ -14,11 +16,14 @@
 #include <time.h>
 #include <signal.h>
 #include <sched.h>
+#include <semaphore.h>
+#include <pthread.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #include <sys/mman.h>
 #include <string.h>
 #include <limits.h>
+#include <mlibc/threads.hpp>
 
 namespace mlibc{
 
@@ -44,9 +49,9 @@ int Sysdeps<FutexTid>::operator()(){
 }
 
 int Sysdeps<FutexWait>::operator()(int *pointer, int expected, const struct timespec *time){
-	// Linux-style futex op through syscall 71:
+	// Linux-style futex op:
 	// futex(uaddr, op=FUTEX_WAIT, val=expected, timeout, uaddr2, val3)
-	// Keep all futex traffic on one ABI path so WAIT/WAKE semantics match.
+	// WAIT uses the Linux-compatible multiplexed futex ABI.
 	long ret = syscall(SYS_FUTEX_WAIT, pointer, kFutexWait | kFutexPrivateFlag, expected, time, 0, 0);
 	if (ret < 0)
 		return -ret;
@@ -56,14 +61,10 @@ int Sysdeps<FutexWait>::operator()(int *pointer, int expected, const struct time
 int Sysdeps<FutexWake>::operator()(int *pointer, bool all) {
 	int count = all ? kFutexWakeAll : kFutexWakeOne;
 
-	long ret = syscall(SYS_FUTEX_WAIT, pointer, kFutexWake | kFutexPrivateFlag, count, 0, 0, 0);
+	long ret = syscall(SYS_FUTEX_WAKE, pointer, count);
 	if (ret < 0)
 		return -ret;
-	// mlibc's mutex/condvar code relies on Linux-style FUTEX_WAKE semantics:
-	// the return value is the number of waiters actually woken. Reporting 0
-	// for every successful wake breaks wake-one handoff chains and strands
-	// remaining waiters behind the mutex waiters bit.
-	return static_cast<int>(ret);
+	return 0;
 }
 
 int Sysdeps<TcbSet>::operator()(void* pointer){
@@ -142,7 +143,7 @@ Sysdeps<VmProtect>::operator()(void *pointer, size_t size, int prot)
 
 
 int Sysdeps<VmRemap>::operator()(void *pointer, size_t size, size_t new_size, void **window) {
-	constexpr int flags = 0;
+	constexpr int flags = MREMAP_MAYMOVE;
 	long ret = syscall(SYS_MREMAP, (uintptr_t)pointer, size, new_size, flags);
 	if (ret < 0)
 		return -ret;
@@ -201,11 +202,15 @@ void Sysdeps<LibcPanic>::operator()(){
 	// 3) If still alive, fall back to _Exit(127).
 	pid_t pid = syscall(SYS_GETPID);
 	if (pid > 0) {
+		pid_t tid = syscall(SYS_GETTID);
 		sigset_t set = {};
 		set.__sig[(SIGABRT - 1) / (8 * sizeof(unsigned long))] =
 		    1UL << ((SIGABRT - 1) % (8 * sizeof(unsigned long)));
 		(void)syscall(SYS_SIGPROCMASK, SIG_UNBLOCK, (uintptr_t)&set, 0, sizeof(sigset_t));
-		(void)syscall(SYS_KILL, pid, SIGABRT);
+		if (tid > 0)
+			(void)syscall(SYS_TGKILL, pid, tid, SIGABRT);
+		else
+			(void)syscall(SYS_KILL, pid, SIGABRT);
 
 		struct sigaction sa = {};
 		sa.sa_handler = SIG_DFL;
@@ -216,7 +221,10 @@ void Sysdeps<LibcPanic>::operator()(){
 		set.__sig[(SIGABRT - 1) / (8 * sizeof(unsigned long))] &=
 		    ~(1UL << ((SIGABRT - 1) % (8 * sizeof(unsigned long))));
 		(void)syscall(SYS_SIGPROCMASK, SIG_SETMASK, (uintptr_t)&set, 0, sizeof(sigset_t));
-		(void)syscall(SYS_KILL, pid, SIGABRT);
+		if (tid > 0)
+			(void)syscall(SYS_TGKILL, pid, tid, SIGABRT);
+		else
+			(void)syscall(SYS_KILL, pid, SIGABRT);
 	}
 
 	syscall(SYS_EXIT_GROUP, 127);
@@ -225,7 +233,12 @@ void Sysdeps<LibcPanic>::operator()(){
 }
 
 void Sysdeps<LibcLog>::operator()(const char* msg){
-	syscall(0, (uintptr_t)msg);
+	size_t n = 0;
+	while (msg[n])
+		n++;
+	syscall(SYS_WRITE, 2, (uintptr_t)msg, n);
+	char lf = '\n';
+	syscall(SYS_WRITE, 2, (uintptr_t)&lf, 1);
 }
 
 int Sysdeps<GetHostname>::operator()(char *buffer, size_t bufsize) {
@@ -414,32 +427,27 @@ void Sysdeps<Yield>::operator()(){
 #define CLONE_SYSVSEM       0x00040000
 #define CLONE_SETTLS        0x00080000
 #define CLONE_PARENT_SETTID 0x00100000
-#define CLONE_CHILD_CLEARTID 0x00200000
-#define CLONE_CHILD_SETTID  0x01000000
 
 int Sysdeps<Clone>::operator()(void *tcb, pid_t *tid_out, void *stack){
 	//mlibc::infoLogger() << "mlibc: sys_clone entry tcb=" << (void*)tcb << " stack=" << (void*)stack << frg::endlog;
 	// Follow Linux mlibc threading flags:
 	// CLONE_VM | CLONE_FS | CLONE_FILES | CLONE_SIGHAND | CLONE_THREAD |
-	// CLONE_SYSVSEM | CLONE_SETTLS | CLONE_PARENT_SETTID |
-	// CLONE_CHILD_SETTID | CLONE_CHILD_CLEARTID
-	// Wire child_tid to tcb->tid so the child sees its TID without relying on
-	// a parent-side futex wake race.
+	// CLONE_SYSVSEM | CLONE_SETTLS | CLONE_PARENT_SETTID.
+	// The generic pthread path publishes tcb->tid after Clone returns and
+	// wakes that futex; join waits on tcb->didExit, not kernel CLEARTID.
 	if (!tcb || !tid_out) {
 		return EINVAL;
 	}
-	auto *child_tid = &reinterpret_cast<Tcb *>(tcb)->tid;
 	uint64_t flags = CLONE_VM | CLONE_FS | CLONE_FILES | CLONE_SIGHAND |
 	                 CLONE_THREAD | CLONE_SYSVSEM | CLONE_SETTLS |
-	                 CLONE_PARENT_SETTID | CLONE_CHILD_SETTID |
-	                 CLONE_CHILD_CLEARTID;
+	                 CLONE_PARENT_SETTID;
 
 	//mlibc::infoLogger() << "mlibc: sys_clone syscall entry=" << (void*)__mlibc_start_thread << " stack=" << (void*)stack << " flags=0x" << flags << frg::endlog;
 
 	// clone(entry, stack, flags, parent_tid, child_tid, tls)
 	// entry is __mlibc_start_thread which pops actual entry/user_arg/tcb from stack
 	long tid = syscall(SYS_CLONE, (uint64_t)__mlibc_start_thread, (uint64_t)stack,
-	                   flags, (uint64_t)tid_out, (uint64_t)child_tid, (uint64_t)tcb);
+	                   flags, (uint64_t)tid_out, 0, (uint64_t)tcb);
 
 	if(tid < 0){
 		return (int)(-tid);  // Return positive errno
@@ -472,7 +480,8 @@ int sys_clone_linux(int (*fn)(void *), void *stack, int flags, void *arg,
 	                   static_cast<uint64_t>(static_cast<uint32_t>(flags)),
 	                   reinterpret_cast<uint64_t>(parent_tid),
 	                   reinterpret_cast<uint64_t>(child_tid),
-	                   reinterpret_cast<uint64_t>(tls));
+	                   reinterpret_cast<uint64_t>(tls),
+	                   0);
 
 	if(tid < 0)
 		return static_cast<int>(-tid);
@@ -651,6 +660,8 @@ int Sysdeps<Prctl>::operator()(int option, va_list va, int *out) {
 		case PR_SET_NAME:
 		case PR_GET_NAME:
 		case PR_SET_DUMPABLE:
+		case PR_SET_CHILD_SUBREAPER:
+		case PR_GET_CHILD_SUBREAPER:
 			arg2 = va_arg(va, unsigned long);
 			break;
 		case PR_GET_DUMPABLE:
@@ -1141,3 +1152,90 @@ int Sysdeps<GetLoadavg>::operator()(double *samples) {
 #endif
 
 } // namespace mlibc
+
+#ifndef MLIBC_BUILDING_RTLD
+extern "C" void *mremap(void *pointer, size_t size, size_t new_size, int flags, ...) {
+	void *new_address = nullptr;
+	if(flags & MREMAP_FIXED) {
+		va_list args;
+		va_start(args, flags);
+		new_address = va_arg(args, void *);
+		va_end(args);
+	}
+
+	long ret;
+	if(flags & MREMAP_FIXED) {
+		ret = syscall(SYS_MREMAP, (uintptr_t)pointer, size, new_size, flags,
+				(uintptr_t)new_address);
+	} else {
+		ret = syscall(SYS_MREMAP, (uintptr_t)pointer, size, new_size, flags);
+	}
+	if(ret < 0) {
+		errno = -ret;
+		return MAP_FAILED;
+	}
+	return (void *)ret;
+}
+
+extern "C" int sched_setaffinity(pid_t pid, size_t cpusetsize, const cpu_set_t *mask) {
+	if(int e = mlibc::Sysdeps<SetAffinity>::operator()(pid, cpusetsize, mask); e) {
+		errno = e;
+		return -1;
+	}
+	return 0;
+}
+
+extern "C" int clone(int (*fn)(void *), void *stack, int flags, void *arg, ...) {
+	pid_t *parent_tid = nullptr;
+	void *tls = nullptr;
+	pid_t *child_tid = nullptr;
+
+	va_list args;
+	va_start(args, arg);
+	if(flags & (CLONE_PARENT_SETTID | CLONE_PIDFD))
+		parent_tid = va_arg(args, pid_t *);
+	if(flags & CLONE_SETTLS)
+		tls = va_arg(args, void *);
+	if(flags & (CLONE_CHILD_SETTID | CLONE_CHILD_CLEARTID))
+		child_tid = va_arg(args, pid_t *);
+	va_end(args);
+
+	int ret;
+	if(int e = mlibc::sys_clone_linux(fn, stack, flags, arg, parent_tid, tls, child_tid, &ret); e) {
+		errno = e;
+		return -1;
+	}
+	return ret;
+}
+
+extern "C" int sem_getvalue(sem_t *sem, int *sval) {
+	if(!sem || !sval) {
+		errno = EINVAL;
+		return -1;
+	}
+
+	constexpr unsigned int semaphoreCountMask = (1u << 31) - 1;
+	unsigned int state = __atomic_load_n(&sem->__mlibc_count, __ATOMIC_ACQUIRE);
+	*sval = static_cast<int>(state & semaphoreCountMask);
+	return 0;
+}
+
+extern "C" int pthread_cond_timedwait(pthread_cond_t *cond, pthread_mutex_t *mutex,
+		const struct timespec *abstime) {
+	if(!cond || !mutex)
+		return EINVAL;
+
+	constexpr unsigned int mutexErrorCheck = 2;
+	constexpr unsigned int mutexOwnerMask = (static_cast<unsigned int>(1) << 30) - 1;
+	if(mutex->__mlibc_flags & mutexErrorCheck) {
+		unsigned int state = __atomic_load_n(&mutex->__mlibc_state, __ATOMIC_ACQUIRE);
+		long tid = syscall(SYS_GETTID);
+		if(tid <= 0 ||
+				!mutex->__mlibc_recursion ||
+				(state & mutexOwnerMask) != static_cast<unsigned int>(tid))
+			return EPERM;
+	}
+
+	return mlibc::thread_cond_timedwait(cond, mutex, abstime, cond->__mlibc_clock);
+}
+#endif

@@ -17,7 +17,6 @@ __mlibc_start_thread:
 	pop %rdx
 	.cfi_adjust_cfa_offset -8
 	.cfi_undefined %rdx
-	mov %fs:0, %rdx
 	call __mlibc_enter_thread
 	ud2
 .cfi_endproc

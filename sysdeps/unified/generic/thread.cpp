@@ -22,37 +22,9 @@ static inline Tcb *get_current_tcb() {
 } // namespace mlibc
 
 extern "C" [[gnu::visibility("hidden")]] void __mlibc_enter_thread(void *entry, void *user_arg, Tcb *tcb) {
-	(void)entry;
-	(void)user_arg;
-
 	if (!tcb) {
 		mlibc::Sysdeps<LibcLog>::operator()("__mlibc_enter_thread: null tcb");
 		__ensure(tcb);
-	}
-	if (!tcb->threadEntry) {
-		mlibc::Sysdeps<LibcLog>::operator()("__mlibc_enter_thread: null stored thread entry before start gate");
-		__ensure(tcb->threadEntry);
-	}
-
-	// Keep new pthreads parked until the parent completes post-clone setup
-	// (signal mask restoration, attr-driven scheduler state, etc.).
-	// Parent-side startup failures are reported through startupError.
-	while (!__atomic_load_n(&tcb->startGate, __ATOMIC_ACQUIRE)) {
-		mlibc::Sysdeps<FutexWait>::operator()(&tcb->startGate, 0, nullptr);
-	}
-
-	int startupError = __atomic_load_n(&tcb->startupError, __ATOMIC_ACQUIRE);
-	if(startupError) {
-		__atomic_store_n(&tcb->didExit, 1, __ATOMIC_RELEASE);
-#ifndef SYS_SETTIDID
-		mlibc::Sysdeps<FutexWake>::operator()(&tcb->didExit, false);
-#endif
-		mlibc::Sysdeps<ThreadExit>::operator()();
-	}
-
-	// Wait until our parent sets up the TID.
-	while (!__atomic_load_n(&tcb->tid, __ATOMIC_ACQUIRE)) {
-		mlibc::Sysdeps<FutexWait>::operator()(&tcb->tid, 0, nullptr);
 	}
 
 	if (mlibc::Sysdeps<TcbSet>::operator()(tcb)) {
@@ -60,19 +32,17 @@ extern "C" [[gnu::visibility("hidden")]] void __mlibc_enter_thread(void *entry, 
 		__ensure(!"Sysdeps<TcbSet>::operator()() failed");
 	}
 
-	if (!tcb->threadEntry) {
-		mlibc::Sysdeps<LibcLog>::operator()("__mlibc_enter_thread: null stored thread entry after start gate");
-		__ensure(tcb->threadEntry);
+	// Wait until our parent publishes the TID after clone returns.
+	while (!__atomic_load_n(&tcb->tid, __ATOMIC_ACQUIRE)) {
+		mlibc::Sysdeps<FutexWait>::operator()(&tcb->tid, 0, nullptr);
 	}
 
-	tcb->invokeThreadFunc(tcb->threadEntry, tcb->threadUserArg);
+	tcb->invokeThreadFunc(entry, user_arg);
 
 	auto self = mlibc::get_current_tcb();
 
 	__atomic_store_n(&self->didExit, 1, __ATOMIC_RELEASE);
-#ifndef SYS_SETTIDID
 	mlibc::Sysdeps<FutexWake>::operator()(&self->didExit, false);
-#endif
 
 	mlibc::Sysdeps<ThreadExit>::operator()();
 }
