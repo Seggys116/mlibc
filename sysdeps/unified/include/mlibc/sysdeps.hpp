@@ -16,6 +16,7 @@ struct UnifiedSysdepTags :
 	Statvfs,
 	Fstatvfs,
 	Readlink,
+	Readlinkat,
 	Truncate,
 	Ftruncate,
 	Fallocate,

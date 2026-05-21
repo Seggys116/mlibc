@@ -324,6 +324,16 @@ int Sysdeps<Readlink>::operator()(const char *path, void *buffer, size_t max_siz
 	return 0;
 }
 
+int Sysdeps<Readlinkat>::operator()(int dirfd, const char *path, void *buffer, size_t max_size, ssize_t *length){
+	long ret = syscall(SYS_READLINKAT, dirfd, path, buffer, max_size);
+	if(ret < 0){
+		return -ret;
+	}
+
+	*length = ret;
+	return 0;
+}
+
 int Sysdeps<Dup>::operator()(int fd, int flags, int* newfd){
 	int ret = 0;
 	if(flags) {

@@ -3,6 +3,7 @@
 #include <unified/syscall.h>
 #include <stddef.h>
 #include <stdarg.h>
+#include <stdint.h>
 #include <bits/ensure.h>
 #include <abi-bits/pid_t.h>
 #include <mlibc/debug.hpp>
@@ -561,8 +562,16 @@ int Sysdeps<PidfdSendSignal>::operator()(int pidfd, int sig, siginfo_t *info, un
 
 int Sysdeps<Fork>::operator()(pid_t *child){
 	int retries = 0;
+	constexpr uintptr_t kVForkCallerProbeWindow = 256;
+	constexpr uint64_t kSysForkVForkSentinel = 0x56464f524b; // "VFORK"
+	uintptr_t caller = reinterpret_cast<uintptr_t>(__builtin_return_address(0));
+	uintptr_t vforkStart = reinterpret_cast<uintptr_t>(&vfork);
+	bool isVForkCaller = caller >= vforkStart &&
+		caller < (vforkStart + kVForkCallerProbeWindow);
+	uint64_t forkMode = isVForkCaller ? kSysForkVForkSentinel : 0;
+
 	while (true) {
-		long ret = syscall(SYS_FORK, 0);
+		long ret = syscall(SYS_FORK, forkMode);
 		int64_t sret = static_cast<int64_t>(ret);
 		if (sret >= 0) {
 			*child = static_cast<pid_t>(sret);
@@ -585,6 +594,7 @@ int Sysdeps<GetPriority>::operator()(int which, id_t who, int *value) {
 	auto ret = syscalln3(SYS_GETPRIORITY, which, who, 0);
 	int64_t sret = static_cast<int64_t>(ret);
 	if (sret < 0) {
+		if (value) *value = -1;
 		return static_cast<int>(-sret);
 	}
 	if (value) *value = 20 - static_cast<int>(sret);
