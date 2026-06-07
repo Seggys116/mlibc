@@ -1,14 +1,28 @@
 #pragma once
 
+#include <bits/posix/iovec.h>
 #include <mlibc/sysdep-signatures.hpp>
 
 namespace mlibc {
+
+#if __MLIBC_POSIX_OPTION
+struct Preadv {};
+struct Pwritev {};
+template <> struct SysdepImpl<Preadv> {
+	static int operator()(int fd, const struct iovec *iovs, int iovc, off_t off, ssize_t *bytes_read);
+};
+template <> struct SysdepImpl<Pwritev> {
+	static int operator()(int fd, const struct iovec *iovs, int iovc, off_t off, ssize_t *bytes_written);
+};
+#endif
 
 struct UnifiedSysdepTags :
 #if __MLIBC_POSIX_OPTION
 	Readv,
 	Writev,
 	Pwrite,
+	Preadv,
+	Pwritev,
 	Access,
 	Faccessat,
 	Dup,

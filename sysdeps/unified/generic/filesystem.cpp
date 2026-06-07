@@ -224,8 +224,8 @@ int Sysdeps<Poll>::operator()(struct pollfd *fds, nfds_t count, int timeout, int
 	return 0;
 }
 
-int Sysdeps<Mkdir>::operator()(const char* path, mode_t){
-	long ret = syscall(SYS_MKDIR, path);
+int Sysdeps<Mkdir>::operator()(const char* path, mode_t mode){
+	long ret = syscall(SYS_MKDIR, path, mode);
 	if(ret < 0){
 		return -ret;
 	}
@@ -707,6 +707,32 @@ int Sysdeps<Readv>::operator()(int fd, const struct iovec *iovs, int iovc, ssize
 int Sysdeps<Writev>::operator()(int fd, const struct iovec *iovs, int iovc, ssize_t *bytes_written)
 {
     long ret = syscall(SYS_WRITEV, fd, iovs, iovc);
+    if (ret < 0) {
+        return -ret;
+    }
+    *bytes_written = ret;
+    return 0;
+}
+
+int Sysdeps<Preadv>::operator()(int fd, const struct iovec *iovs, int iovc, off_t off, ssize_t *bytes_read)
+{
+    uint64_t offset = static_cast<uint64_t>(off);
+    long ret = syscall(SYS_PREADV, fd, iovs, iovc,
+        static_cast<uint32_t>(offset),
+        static_cast<uint32_t>(offset >> 32));
+    if (ret < 0) {
+        return -ret;
+    }
+    *bytes_read = ret;
+    return 0;
+}
+
+int Sysdeps<Pwritev>::operator()(int fd, const struct iovec *iovs, int iovc, off_t off, ssize_t *bytes_written)
+{
+    uint64_t offset = static_cast<uint64_t>(off);
+    long ret = syscall(SYS_PWRITEV, fd, iovs, iovc,
+        static_cast<uint32_t>(offset),
+        static_cast<uint32_t>(offset >> 32));
     if (ret < 0) {
         return -ret;
     }

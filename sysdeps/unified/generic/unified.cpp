@@ -1026,9 +1026,8 @@ static int fetch_sysinfo(struct sysinfo *out) {
 }
 
 int Sysdeps<Sysconf>::operator()(int num, long *ret) {
-	// Prefer direct kernel system info for memory/cpu-related sysconf values.
-	if (num == _SC_PHYS_PAGES || num == _SC_AVPHYS_PAGES
-			|| num == _SC_NPROCESSORS_CONF || num == _SC_NPROCESSORS_ONLN) {
+	// Prefer direct kernel system info for memory-related sysconf values.
+	if (num == _SC_PHYS_PAGES || num == _SC_AVPHYS_PAGES) {
 		struct sysinfo info = {};
 		long page_size = 0;
 		if (!fetch_sysinfo(&info)
@@ -1043,10 +1042,6 @@ int Sysdeps<Sysconf>::operator()(int num, long *ret) {
 					return 0;
 				case _SC_AVPHYS_PAGES:
 					*ret = clamp_u64_to_long(free / static_cast<uint64_t>(page_size));
-					return 0;
-				case _SC_NPROCESSORS_CONF:
-				case _SC_NPROCESSORS_ONLN:
-					*ret = info.procs ? static_cast<long>(info.procs) : 1;
 					return 0;
 			}
 		}

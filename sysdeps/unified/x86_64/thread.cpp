@@ -49,7 +49,7 @@ int Sysdeps<PrepareStack>::operator()(
 	} else {
 		size_t map_size = *stack_size + effective_guard;
 		void *map_base =
-		    mmap(nullptr, map_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+		    mmap(nullptr, map_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_STACK, -1, 0);
 		if (map_base == MAP_FAILED) {
 			return errno;
 		}
