@@ -22,9 +22,11 @@
 #include <sys/wait.h>
 #include <unistd.h>
 #include <sys/mman.h>
+#include <sys/uio.h>
 #include <string.h>
 #include <limits.h>
 #include <mlibc/threads.hpp>
+#include <mlibc/thread.hpp>
 
 namespace mlibc{
 
@@ -269,6 +271,66 @@ int Sysdeps<Uname>::operator()(struct utsname *buf) {
 		return -ret;
 	}
 	return 0;
+}
+
+int Sysdeps<Setxattr>::operator()(const char *, const char *, const void *, size_t, int) {
+	return ENOTSUP;
+}
+
+int Sysdeps<Lsetxattr>::operator()(const char *, const char *, const void *, size_t, int) {
+	return ENOTSUP;
+}
+
+int Sysdeps<Fsetxattr>::operator()(int, const char *, const void *, size_t, int) {
+	return ENOTSUP;
+}
+
+static int no_xattr_value(ssize_t *nread) {
+	if (nread)
+		*nread = 0;
+	return ENODATA;
+}
+
+int Sysdeps<Getxattr>::operator()(const char *, const char *, void *, size_t, ssize_t *nread) {
+	return no_xattr_value(nread);
+}
+
+int Sysdeps<Lgetxattr>::operator()(const char *, const char *, void *, size_t, ssize_t *nread) {
+	return no_xattr_value(nread);
+}
+
+int Sysdeps<Fgetxattr>::operator()(int, const char *, void *, size_t, ssize_t *nread) {
+	return no_xattr_value(nread);
+}
+
+static int empty_xattr_list(ssize_t *nread) {
+	if (nread)
+		*nread = 0;
+	return 0;
+}
+
+int Sysdeps<Listxattr>::operator()(const char *, char *, size_t, ssize_t *nread) {
+	return empty_xattr_list(nread);
+}
+
+int Sysdeps<Llistxattr>::operator()(const char *, char *, size_t, ssize_t *nread) {
+	return empty_xattr_list(nread);
+}
+
+int Sysdeps<Flistxattr>::operator()(int, char *, size_t, ssize_t *nread) {
+	return empty_xattr_list(nread);
+}
+
+int Sysdeps<Removexattr>::operator()(const char *, const char *) {
+	return ENODATA;
+}
+
+int Sysdeps<Lremovexattr>::operator()(const char *, const char *) {
+	return ENODATA;
+}
+
+int Sysdeps<Fremovexattr>::operator()(int, const char *) {
+	return ENODATA;
 }
 
 #ifndef MLIBC_BUILDING_RTLD
@@ -1182,6 +1244,26 @@ extern "C" void *mremap(void *pointer, size_t size, size_t new_size, int flags, 
 	return (void *)ret;
 }
 
+extern "C" ssize_t preadv(int fd, const struct iovec *iovs, int iovc, off_t off) {
+	ssize_t read_bytes = 0;
+	if(int e = mlibc::Sysdeps<mlibc::Preadv>::operator()(fd, iovs, iovc, off, &read_bytes); e) {
+		errno = e;
+		return -1;
+	}
+
+	return read_bytes;
+}
+
+extern "C" ssize_t pwritev(int fd, const struct iovec *iovs, int iovc, off_t off) {
+	ssize_t written = 0;
+	if(int e = mlibc::Sysdeps<mlibc::Pwritev>::operator()(fd, iovs, iovc, off, &written); e) {
+		errno = e;
+		return -1;
+	}
+
+	return written;
+}
+
 extern "C" int sched_setaffinity(pid_t pid, size_t cpusetsize, const cpu_set_t *mask) {
 	if(int e = mlibc::Sysdeps<SetAffinity>::operator()(pid, cpusetsize, mask); e) {
 		errno = e;
@@ -1242,5 +1324,28 @@ extern "C" int pthread_cond_timedwait(pthread_cond_t *cond, pthread_mutex_t *mut
 	}
 
 	return mlibc::thread_cond_timedwait(cond, mutex, abstime, cond->__mlibc_clock);
+}
+
+extern "C" int pthread_getattr_np(pthread_t thread, pthread_attr_t *attr) {
+	if(!thread || !attr)
+		return EINVAL;
+
+	auto tcb = reinterpret_cast<Tcb *>(thread);
+	*attr = pthread_attr_t{};
+	attr->__mlibc_stacksize = tcb->stackSize;
+	attr->__mlibc_stackaddr = tcb->stackAddr;
+	attr->__mlibc_guardsize = tcb->guardSize;
+	attr->__mlibc_detachstate = tcb->isJoinable ? PTHREAD_CREATE_JOINABLE : PTHREAD_CREATE_DETACHED;
+	return 0;
+}
+
+extern "C" void *pthread_getspecific(pthread_key_t key) {
+	if(mlibc::tcb_available_flag) {
+		auto *self = mlibc::get_current_tcb();
+		if(self && (__atomic_load_n(&self->cancelBits, __ATOMIC_ACQUIRE) & tcbExitingBit))
+			return nullptr;
+	}
+
+	return mlibc::thread_key_get(key);
 }
 #endif
