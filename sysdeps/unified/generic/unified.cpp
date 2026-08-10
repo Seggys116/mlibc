@@ -1326,12 +1326,38 @@ extern "C" int pthread_cond_timedwait(pthread_cond_t *cond, pthread_mutex_t *mut
 	return mlibc::thread_cond_timedwait(cond, mutex, abstime, cond->__mlibc_clock);
 }
 
+extern "C" uintptr_t *__dlapi_entrystack();
+
 extern "C" int pthread_getattr_np(pthread_t thread, pthread_attr_t *attr) {
 	if(!thread || !attr)
 		return EINVAL;
 
 	auto tcb = reinterpret_cast<Tcb *>(thread);
 	*attr = pthread_attr_t{};
+
+	if(!tcb->stackAddr || !tcb->stackSize) {
+		// The initial thread's TCB never gets stack bounds populated, and
+		// Unified has no /proc/self/maps for the generic mlibc fallback.
+		// Runtimes size their stack accounting from this call -- V8 aborts
+		// with "Check failed: IsOnCentralStack()" if it gets zeros here.
+		// Reconstruct the bounds instead: every stack pointer this thread
+		// ever runs at lies below the ELF entry stack pointer, so the page
+		// above it bounds the stack from the top, and the kernel maps the
+		// main stack with the RLIMIT_STACK size (8 MiB by default).
+		uintptr_t pageSize = 0x1000;
+		uintptr_t top = (reinterpret_cast<uintptr_t>(__dlapi_entrystack()) + pageSize - 1)
+				& ~(pageSize - 1);
+		uintptr_t size = 0x800000;
+		struct rlimit rl;
+		if(!getrlimit(RLIMIT_STACK, &rl) && rl.rlim_cur != RLIM_INFINITY &&
+				rl.rlim_cur >= pageSize && rl.rlim_cur < top)
+			size = (rl.rlim_cur + pageSize - 1) & ~(pageSize - 1);
+		if(size >= top)
+			size = top - pageSize;
+		tcb->stackSize = size;
+		tcb->stackAddr = reinterpret_cast<void *>(top - size);
+	}
+
 	attr->__mlibc_stacksize = tcb->stackSize;
 	attr->__mlibc_stackaddr = tcb->stackAddr;
 	attr->__mlibc_guardsize = tcb->guardSize;
